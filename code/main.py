@@ -26,7 +26,7 @@ def main():
         sys.argv.pop(1)
         # Launch CLI interface
         try:
-            from filepilot_code.cli.cli_handler import main as cli_main
+            from code.cli.cli_handler import main as cli_main
         except ImportError:
             # Try relative import if running from within package
             try:
@@ -43,7 +43,7 @@ def main():
             # Import GUI dependencies
             from PyQt5.QtWidgets import QApplication
             try:
-                from filepilot_code.gui.main_window import MainWindow, run_app
+                from code.gui.main_window import MainWindow, run_app
             except ImportError:
                 # Try relative import if running from within package
                 try:

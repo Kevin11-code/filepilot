@@ -1,7 +1,7 @@
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTableWidget,
                            QAbstractItemView, QHeaderView, QPushButton,
                            QTableWidgetItem, QMessageBox, QInputDialog, QLineEdit)
-from filepilot_code.gui.conn_dialog import ConnectionDialog
+from code.gui.conn_dialog import ConnectionDialog
 
 class ConnectionManagerDialog(QDialog):
     """Dialog for managing saved SFTP connections"""

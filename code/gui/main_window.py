@@ -12,14 +12,14 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QModelIndex, QSize, QSettings
 from PyQt5.QtGui import QIcon, QStandardItemModel, QStandardItem
 
-from filepilot_code.core.auth_manager import AuthManager
-from filepilot_code.core.transfer_manager import TransferManager
-from filepilot_code.core.sftp_client import SFTPClient
-from filepilot_code.utils.logger import LoggerSetup
-from filepilot_code.gui.conn_dialog import ConnectionDialog
-from filepilot_code.gui.file_panel import FilePanel
-from filepilot_code.gui.transfer_panel import TransferPanel
-from filepilot_code.gui.conn_manager import ConnectionManagerDialog
+from code.core.auth_manager import AuthManager
+from code.core.transfer_manager import TransferManager
+from code.core.sftp_client import SFTPClient
+from code.utils.logger import LoggerSetup
+from code.gui.conn_dialog import ConnectionDialog
+from code.gui.file_panel import FilePanel
+from code.gui.transfer_panel import TransferPanel
+from code.gui.conn_manager import ConnectionManagerDialog
 
 
 

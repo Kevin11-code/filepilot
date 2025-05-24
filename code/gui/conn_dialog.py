@@ -1,6 +1,6 @@
 from PyQt5.QtWidgets import QDialog, QVBoxLayout, QFormLayout, QLineEdit, QSpinBox, QComboBox, QPushButton, QHBoxLayout, QCheckBox, QDialogButtonBox, QFileDialog, QMessageBox
-from filepilot_code.core.auth_manager import AuthManager
-from filepilot_code.core.sftp_client import SFTPClient
+from code.core.auth_manager import AuthManager
+from code.core.sftp_client import SFTPClient
 
 class ConnectionDialog(QDialog):
     """Dialog for creating and editing SFTP connections"""

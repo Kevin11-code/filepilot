@@ -3,8 +3,8 @@ from PyQt5.QtCore import pyqtSignal, Qt
 from PyQt5.QtGui import QStandardItemModel, QStandardItem
 import os
 import time
-from filepilot_code.gui.conn_dialog import ConnectionDialog
-from filepilot_code.core.sftp_client import SFTPClient
+from code.gui.conn_dialog import ConnectionDialog
+from code.core.sftp_client import SFTPClient
 
 class FilePanel(QWidget):
     """
