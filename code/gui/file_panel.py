@@ -261,6 +261,85 @@ class FilePanel(QWidget):
             else:
                 menu.addAction("Upload", lambda: self.itemSelected.emit(
                     os.path.join(self.current_path, name), is_dir))
+            
+            # Add delete option for both remote and local files/directories
+            menu.addSeparator()
+            menu.addAction("Delete", lambda: self.delete_item(name, is_dir))
         
         menu.exec_(self.file_view.viewport().mapToGlobal(position))
+    
+    def delete_item(self, name, is_dir):
+        """Delete the selected file or directory"""
+        full_path = os.path.join(self.current_path, name)
+        item_type = "directory" if is_dir else "file"
+        
+        # Ask for confirmation
+        reply = QMessageBox.question(
+            self, 
+            f"Delete {item_type.capitalize()}", 
+            f"Are you sure you want to delete this {item_type}?\n\n{full_path}",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply != QMessageBox.Yes:
+            return
+        
+        try:
+            if self.is_remote and self.client:
+                # Remote file/directory deletion
+                if is_dir:
+                    self.delete_remote_directory(full_path)
+                else:
+                    self.client.sftp.remove(full_path)
+                    self.refresh()
+                    if hasattr(self.window(), 'status_bar'):
+                        self.window().status_bar.showMessage(f"Deleted: {full_path}", 5000)
+            else:
+                # Local file/directory deletion
+                if is_dir:
+                    import shutil
+                    shutil.rmtree(full_path)
+                else:
+                    os.remove(full_path)
+                
+                self.refresh()
+                if hasattr(self.window(), 'status_bar'):
+                    self.window().status_bar.showMessage(f"Deleted: {full_path}", 5000)
+                
+        except Exception as e:
+            QMessageBox.critical(
+                self, 
+                "Delete Failed", 
+                f"Failed to delete {item_type}: {full_path}\n\nError: {str(e)}"
+            )
+    
+    def delete_remote_directory(self, dir_path):
+        """Recursively delete a remote directory"""
+        try:
+            # List all directory contents
+            for item in self.client.list_directory(dir_path):
+                name, _, item_type, _ = item
+                item_path = f"{dir_path}/{name}"
+                
+                if item_type == 'dir':
+                    # Recursively delete subdirectory
+                    self.delete_remote_directory(item_path)
+                else:
+                    # Delete file
+                    self.client.sftp.remove(item_path)
+            
+            # Delete the now empty directory
+            self.client.sftp.rmdir(dir_path)
+            self.refresh()
+            
+            if hasattr(self.window(), 'status_bar'):
+                self.window().status_bar.showMessage(f"Deleted directory: {dir_path}", 5000)
+                
+        except Exception as e:
+            QMessageBox.critical(
+                self, 
+                "Delete Failed", 
+                f"Failed to delete directory: {dir_path}\n\nError: {str(e)}"
+            )
 

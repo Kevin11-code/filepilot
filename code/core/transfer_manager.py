@@ -450,8 +450,55 @@ class TransferManager:
             transfer.status = TransferStatus.IN_PROGRESS
             transfer.start_time = time.time()
             
-            # Create SFTP client
-            client = SFTPClient(logger=self.logger)
+            # Check if we're using an active connection from the GUI
+            using_active_connection = False
+            
+            if transfer.transfer_type == TransferType.UPLOAD:
+                if transfer.dest_config.get('host') == 'active_connection':
+                    using_active_connection = True
+            elif transfer.transfer_type == TransferType.DOWNLOAD:
+                if transfer.source_config.get('host') == 'active_connection':
+                    using_active_connection = True
+            
+            # Get active connection from remote panel if needed
+            client = None
+            
+            if using_active_connection:
+                # Find the main window to access its remote panel
+                try:
+                    from PyQt5.QtWidgets import QApplication
+                    main_window = None
+                    
+                    # Find main window instance
+                    for widget in QApplication.topLevelWidgets():
+                        if widget.__class__.__name__ == 'MainWindow':
+                            main_window = widget
+                            break
+                    
+                    if main_window and hasattr(main_window, 'remote_panel'):
+                        remote_panel = main_window.remote_panel
+                        if remote_panel.client and remote_panel.client.sftp:
+                            # Use the existing SFTP client
+                            client = remote_panel.client
+                            self.logger.info("Using existing SFTP client connection from remote panel")
+                except Exception as e:
+                    self.logger.error(f"Failed to get active SFTP client: {str(e)}")
+            
+            # Create a new SFTP client if we couldn't reuse the existing one
+            if client is None:
+                client = SFTPClient(logger=self.logger)
+                
+                # Connect based on transfer type
+                if transfer.transfer_type == TransferType.UPLOAD:
+                    if not client.connect(**transfer.dest_config):
+                        transfer.status = TransferStatus.FAILED
+                        transfer.error_message = "Failed to connect to destination server"
+                        return
+                elif transfer.transfer_type == TransferType.DOWNLOAD:
+                    if not client.connect(**transfer.source_config):
+                        transfer.status = TransferStatus.FAILED
+                        transfer.error_message = "Failed to connect to source server"
+                        return
             
             # Progress callback
             def update_progress(bytes_transferred, total_bytes, percent):
@@ -469,14 +516,15 @@ class TransferManager:
             # Process based on transfer type
             if transfer.transfer_type == TransferType.UPLOAD:
                 # Upload file
-                result = False
-                if client.connect(**transfer.dest_config):
-                    result = client.upload_file(
-                        transfer.source_path, 
-                        transfer.dest_path,
-                        transfer.chunks,
-                        update_progress
-                    )
+                result = client.upload_file(
+                    transfer.source_path, 
+                    transfer.dest_path,
+                    transfer.chunks,
+                    update_progress
+                )
+                
+                # Only disconnect if we created a new connection
+                if not using_active_connection:
                     client.disconnect()
                     
                 if result:
@@ -487,14 +535,15 @@ class TransferManager:
                     
             elif transfer.transfer_type == TransferType.DOWNLOAD:
                 # Download file
-                result = False
-                if client.connect(**transfer.source_config):
-                    result = client.download_file(
-                        transfer.source_path,
-                        transfer.dest_path,
-                        transfer.chunks,
-                        update_progress
-                    )
+                result = client.download_file(
+                    transfer.source_path,
+                    transfer.dest_path,
+                    transfer.chunks,
+                    update_progress
+                )
+                
+                # Only disconnect if we created a new connection
+                if not using_active_connection:
                     client.disconnect()
                     
                 if result:
@@ -540,3 +589,98 @@ class TransferManager:
                     self.transfer_history.append(transfer)
                     
             self.logger.info(f"Transfer completed with status {transfer.status.name}: {transfer.source_path} -> {transfer.dest_path}")
+    
+    def upload_file(self, source_path: str, dest_path: str, progress_callback: Callable = None) -> int:
+        """
+        Upload a file from local system to remote server.
+        
+        Args:
+            source_path: Local file path
+            dest_path: Path on the remote server
+            progress_callback: Callback function for progress updates
+            
+        Returns:
+            int: Transfer ID
+        """
+        # For uploads from the GUI, we're using an active SFTP connection
+        # The connection is already established in the remote panel
+        # We just need to create a minimal config to identify the connection
+        
+        # Create a basic server config (we rely on existing connection)
+        server_config = {'host': 'active_connection'}
+        
+        # Queue the upload with default parameters
+        transfer_id = self.queue_upload(source_path, dest_path, server_config)
+        
+        # Store the callback in a dict for use in _process_transfer
+        if progress_callback:
+            self._register_progress_callback(transfer_id, progress_callback)
+        
+        return transfer_id
+    
+    def download_file(self, source_path: str, dest_path: str, progress_callback: Callable = None) -> int:
+        """
+        Download a file from remote server to local system.
+        
+        Args:
+            source_path: Path on the remote server
+            dest_path: Local file path
+            progress_callback: Callback function for progress updates
+            
+        Returns:
+            int: Transfer ID
+        """
+        # For downloads from the GUI, we're using an active SFTP connection
+        # The connection is already established in the remote panel
+        # We just need to create a minimal config to identify the connection
+        
+        # Create a basic server config (we rely on existing connection)
+        server_config = {'host': 'active_connection'}
+        
+        # Queue the download with default parameters
+        transfer_id = self.queue_download(source_path, dest_path, server_config)
+        
+        # Store the callback in a dict for use in _process_transfer
+        if progress_callback:
+            self._register_progress_callback(transfer_id, progress_callback)
+        
+        return transfer_id
+    
+    def _register_progress_callback(self, transfer_id: int, callback: Callable) -> None:
+        """
+        Register a progress callback for a specific transfer.
+        
+        Args:
+            transfer_id: The ID of the transfer
+            callback: The callback function
+        """
+        # Need to find the transfer and hook up the callback
+        with self.lock:
+            if transfer_id in self.active_transfers:
+                transfer = self.active_transfers[transfer_id]
+                self._hook_progress_callback(transfer, callback)
+                return
+                
+        # Check queue
+        queue_list = list(self.transfer_queue.queue)
+        for _, item in queue_list:
+            if item.id == transfer_id:
+                self._hook_progress_callback(item, callback)
+                return
+    
+    def _hook_progress_callback(self, transfer: TransferItem, callback: Callable) -> None:
+        """
+        Hook up a progress callback to a transfer.
+        
+        Args:
+            transfer: The transfer item
+            callback: The callback function
+        """
+        # Save original update_progress function
+        original_update_progress = None
+        
+        # Define a new progress function that calls both the original and the callback
+        def progress_wrapper(bytes_transferred, total_bytes, percent):
+            if original_update_progress:
+                original_update_progress(bytes_transferred, total_bytes, percent)
+            callback(transfer.id, bytes_transferred, total_bytes)

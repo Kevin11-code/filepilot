@@ -201,13 +201,93 @@ class MainWindow(QMainWindow):
     
     def local_item_selected(self, path, is_dir):
         """Handle file or directory selection in the local panel"""
-        # For now, just print the selected item
-        print(f"Local item selected: {path} (Directory: {is_dir})")
+        # Extract the file/directory name from the path
+        name = os.path.basename(path)
+        
+        # Get the current path in the remote panel
+        remote_path = self.remote_panel.current_path
+        
+        if not remote_path or not self.remote_panel.client:
+            QMessageBox.warning(self, "No Remote Connection", 
+                              "Please connect to a remote server before uploading.")
+            return
+        
+        # Set up source and destination paths
+        source_path = path
+        
+        if is_dir:
+            # If it's a directory, use the remote path as destination
+            destination_path = os.path.join(remote_path, name)
+            
+            # Confirm directory upload
+            reply = QMessageBox.question(
+                self, "Upload Directory",
+                f"Upload directory '{name}' to '{destination_path}'?", 
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+                
+            if reply != QMessageBox.Yes:
+                return
+        else:
+            # If it's a file, ask where to upload
+            default_dest = os.path.join(remote_path, name) if remote_path else name
+            destination_path = QInputDialog.getText(
+                self, "Upload File", 
+                "Remote destination path:", 
+                QLineEdit.Normal, 
+                default_dest)[0]
+            
+            if not destination_path:
+                return
+        
+        # Start the transfer
+        transfer_id = self.transfer_manager.upload_file(
+            source_path, destination_path, self.on_transfer_progress)
+        
+        if transfer_id:
+            self.status_bar.showMessage(f"Upload started: {name} → {destination_path}", 5000)
+        else:
+            QMessageBox.critical(self, "Upload Failed", "Failed to start upload.")
     
     def remote_item_selected(self, path, is_dir):
         """Handle file or directory selection in the remote panel"""
-        # For now, just print the selected item
-        print(f"Remote item selected: {path} (Directory: {is_dir})")
+        # Extract the file/directory name from the path
+        name = os.path.basename(path)
+        
+        # Get the current path in the local panel
+        local_path = self.local_panel.current_path
+        
+        # Set up source and destination paths
+        source_path = path
+        
+        if is_dir:
+            # If it's a directory, ask for confirmation and use the local path as destination
+            destination_path = os.path.join(local_path, name)
+            
+            # Confirm directory download
+            reply = QMessageBox.question(
+                self, "Download Directory",
+                f"Download directory '{name}' to '{destination_path}'?", 
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+                
+            if reply != QMessageBox.Yes:
+                return
+        else:
+            # If it's a file, ask where to download
+            default_dest = os.path.join(local_path, name)
+            destination_path, _ = QFileDialog.getSaveFileName(
+                self, "Download File", default_dest)
+            
+            if not destination_path:
+                return
+        
+        # Start the transfer
+        transfer_id = self.transfer_manager.download_file(
+            source_path, destination_path, self.on_transfer_progress)
+        
+        if transfer_id:
+            self.status_bar.showMessage(f"Download started: {name} → {destination_path}", 5000)
+        else:
+            QMessageBox.critical(self, "Download Failed", "Failed to start download.")
     
     def upload_file(self):
         """Upload a file or directory to the remote server"""
@@ -304,9 +384,8 @@ class MainWindow(QMainWindow):
                           "<h2>FilePilot SFTP Client</h2>"
                           "<p>Version 1.0</p>"
                           "<p>A simple SFTP client using PyQt and Paramiko.</p>"
-                          "<p>Copyright © 2023 Your Company</p>"
-                          "<p><a href='https://www.yourcompany.com'>www.yourcompany.com</a></p>",
-                          QMessageBox.Ok)
+                          "<p>Copyright © 2025 ALT+F4</p>"
+                          "<p><a href='https://www.altf4.com'>www.altf4.com</a></p>")
 
 
 def run_app():
