@@ -1,1 +1,47 @@
-/logs
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+filepilot.egg-info/
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+.env/
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+temp/
+*.tmp
+
+# OS specific files
+.DS_Store
+Thumbs.db
+
+# Editor specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Test files - large test files should not be tracked
+2gb.txt
+200kb.txt
+
+# Local configuration
+config/connections.json
+
+# Environment installation scripts - if they contain secrets
+# Uncomment if needed
+# installEnv.ps1
+# installEnv.sh

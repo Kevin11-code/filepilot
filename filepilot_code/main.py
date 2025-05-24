@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 FilePilot main entry script.
 Allows launching either the GUI or CLI interface.
@@ -6,6 +5,11 @@ Allows launching either the GUI or CLI interface.
 import os
 import sys
 import argparse
+
+# Add parent directory to path to help resolve imports
+parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
 
 def main():
     """Main entry point for FilePilot"""
@@ -21,7 +25,15 @@ def main():
         # Remove the --cli argument for the CLI parser
         sys.argv.pop(1)
         # Launch CLI interface
-        from filepilot.cli.cli_handler import main as cli_main
+        try:
+            from filepilot_code.cli.cli_handler import main as cli_main
+        except ImportError:
+            # Try relative import if running from within package
+            try:
+                from cli.cli_handler import main as cli_main
+            except ImportError:
+                print("Error: Could not import CLI module.")
+                sys.exit(1)
         cli_main()
     else:
         # Parse remaining arguments for GUI mode
@@ -30,7 +42,15 @@ def main():
         try:
             # Import GUI dependencies
             from PyQt5.QtWidgets import QApplication
-            from filepilot.gui.main_window import MainWindow, run_app
+            try:
+                from filepilot_code.gui.main_window import MainWindow, run_app
+            except ImportError:
+                # Try relative import if running from within package
+                try:
+                    from gui.main_window import MainWindow, run_app
+                except ImportError:
+                    print("Error: Could not import GUI module.")
+                    sys.exit(1)
         except ImportError:
             print("Error: PyQt5 is required for the GUI interface.")
             print("Install it with: pip install PyQt5")

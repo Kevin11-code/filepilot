@@ -10,7 +10,7 @@ from PyQt5.QtWidgets import (
     QDialog, QDialogButtonBox, QFormLayout, QSpinBox, QCheckBox, QTableWidget,
     QTableWidgetItem, QSplitter, QFrame
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QModelIndex, QSize
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QModelIndex, QSize, QSettings
 from PyQt5.QtGui import QIcon, QStandardItemModel, QStandardItem
 
 from ..core.sftp_client import SFTPClient
@@ -325,15 +325,58 @@ class FilePanel(QWidget):
     
     def connection_changed(self, connection_name):
         """Handle change of selected connection"""
-        # This will be implemented to create a new SFTP client connection
-        pass
+        if not connection_name:
+            self.client = None
+            return
+            
+        try:
+            # Get connection details from auth manager
+            parent_window = self.window()
+            if parent_window and hasattr(parent_window, 'auth_manager'):
+                auth_manager = parent_window.auth_manager
+                connection = auth_manager.get_connection(connection_name)
+                
+                if connection:
+                    # Create new SFTP client
+                    client = SFTPClient()
+                    
+                    # Build connection parameters
+                    params = {
+                        'host': connection.get('host', ''),
+                        'port': connection.get('port', 22),
+                        'username': connection.get('username', '')
+                    }
+                    
+                    if connection.get('key_path'):
+                        params['key_path'] = connection.get('key_path')
+                        if 'passphrase' in connection:
+                            params['passphrase'] = connection.get('passphrase')
+                    else:
+                        params['password'] = connection.get('password', '')
+                    
+                    # Try to connect
+                    if client.connect(**params):
+                        self.set_client(client)
+                        if hasattr(parent_window, 'status_bar'):
+                            parent_window.status_bar.showMessage(f"Connected to {connection_name}")
+                    else:
+                        QMessageBox.critical(self, "Error", "Failed to connect to server.")
+            else:
+                QMessageBox.warning(self, "Error", "Could not access connection manager.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Connection error: {str(e)}")
     
     def new_connection(self):
         """Open dialog to create a new connection"""
-        dialog = ConnectionDialog(self)
+        # Get the parent window to access the auth_manager
+        parent_window = self.window()
+        auth_manager = parent_window.auth_manager if hasattr(parent_window, 'auth_manager') else None
+        
+        dialog = ConnectionDialog(self, auth_manager)
         if dialog.exec_():
             # Refresh connection list
-            pass
+            if hasattr(parent_window, 'refresh_connections'):
+                parent_window.refresh_connections()
     
     def navigate_to_path(self):
         """Navigate to the path entered in the path field"""
@@ -780,138 +823,174 @@ class MainWindow(QMainWindow):
         about_action = QAction("About", self)
         about_action.triggered.connect(self.show_about)
         help_menu.addAction(about_action)
+        
+        # Restore the window geometry if available
+        self.restore_geometry()
+    
+    def closeEvent(self, event):
+        """Handle window close event"""
+        # Save the window geometry
+        self.save_geometry()
+        
+        # Stop transfer manager
+        self.transfer_manager.stop()
+        
+        event.accept()
+    
+    def save_geometry(self):
+        """Save the window geometry to settings"""
+        settings = QSettings("YourCompany", "FilePilot")
+        settings.setValue("geometry", self.saveGeometry())
+        settings.setValue("windowState", self.saveState())
+    
+    def restore_geometry(self):
+        """Restore the window geometry from settings"""
+        settings = QSettings("YourCompany", "FilePilot")
+        if settings.contains("geometry"):
+            self.restoreGeometry(settings.value("geometry"))
+        if settings.contains("windowState"):
+            self.restoreState(settings.value("windowState"))
     
     def new_connection(self):
-        """Open dialog to create a new SFTP connection"""
-        dialog = ConnectionDialog(self, self.auth_manager)
+        """Open the connection dialog to create a new connection"""
+        dialog = ConnectionDialog(self)
         if dialog.exec_():
+            # Refresh connection list
             self.refresh_connections()
     
     def manage_connections(self):
-        """Open dialog to manage SFTP connections"""
-        # This would be implemented as a more comprehensive dialog
-        pass
+        """Open the connection manager dialog"""
+        dialog = ConnectionManagerDialog(self.auth_manager, self)
+        dialog.exec_()
     
     def refresh_connections(self):
-        """Refresh the list of available connections"""
-        connections = self.auth_manager.list_connections()
+        """Refresh the list of connections in the combo boxes"""
+        # Refresh in file panels
+        # Only access conn_combo on the remote panel
         self.remote_panel.conn_combo.clear()
         
+        connections = self.auth_manager.list_connections()
         for conn in connections:
-            self.remote_panel.conn_combo.addItem(conn.get('name', ''))
-    
-    def upload_file(self):
-        """Open dialog to upload a file"""
-        if not self.remote_panel.client:
-            QMessageBox.warning(self, "Error", "Please connect to a server first.")
-            return
-            
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Select File to Upload", "", "All Files (*)"
-        )
-        
-        if file_path and self.remote_panel.current_path:
-            remote_path = os.path.join(
-                self.remote_panel.current_path, 
-                os.path.basename(file_path)
-            )
-            
-            # Get connection config from remote panel's client
-            # (This is a simplification, in practice we'd need to extract the config)
-            config = {}  # This would be properly populated in the real implementation
-            
-            self.transfer_manager.queue_upload(
-                file_path, remote_path, config
-            )
-            
-            self.status_bar.showMessage(f"Upload queued: {file_path}")
-    
-    def download_file(self):
-        """Open dialog to download a file"""
-        if not self.remote_panel.client:
-            QMessageBox.warning(self, "Error", "Please connect to a server first.")
-            return
-            
-        # This would typically be triggered from the remote panel's selection
-        pass
-    
-    def server_to_server_transfer(self):
-        """Open dialog for server to server transfer"""
-        # This would be implemented as a dialog to configure the transfer
-        pass
+            name = conn.get('name')
+            if name:
+                self.remote_panel.conn_combo.addItem(name)
     
     def local_item_selected(self, path, is_dir):
-        """Handle selection of an item in the local panel"""
-        if is_dir:
-            return  # We don't upload directories in this basic example
-            
-        if not self.remote_panel.client:
-            QMessageBox.warning(self, "Error", "Please connect to a server first.")
-            return
-            
-        # Ask for confirmation
-        msg_box = QMessageBox()
-        msg_box.setIcon(QMessageBox.Question)
-        msg_box.setText(f"Upload {os.path.basename(path)} to {self.remote_panel.current_path}?")
-        msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        
-        if msg_box.exec_() == QMessageBox.Yes:
-            remote_path = os.path.join(
-                self.remote_panel.current_path,
-                os.path.basename(path)
-            )
-            
-            # Get connection config
-            config = {}  # This would be properly populated in the real implementation
-            
-            self.transfer_manager.queue_upload(
-                path, remote_path, config
-            )
-            
-            self.status_bar.showMessage(f"Upload queued: {path}")
+        """Handle file or directory selection in the local panel"""
+        # For now, just print the selected item
+        print(f"Local item selected: {path} (Directory: {is_dir})")
     
     def remote_item_selected(self, path, is_dir):
-        """Handle selection of an item in the remote panel"""
-        if is_dir:
-            return  # We don't download directories in this basic example
-            
-        # Ask for destination
-        local_dir = QFileDialog.getExistingDirectory(
-            self, "Select Download Location", self.local_panel.current_path
-        )
+        """Handle file or directory selection in the remote panel"""
+        # For now, just print the selected item
+        print(f"Remote item selected: {path} (Directory: {is_dir})")
+    
+    def upload_file(self):
+        """Upload a file or directory to the remote server"""
+        # Get the selected file or directory from the local panel
+        selected_items = self.local_panel.file_view.selectedIndexes()
+        if not selected_items:
+            QMessageBox.warning(self, "No Selection", "Please select a file or directory to upload.")
+            return
         
-        if local_dir:
-            local_path = os.path.join(
-                local_dir,
-                os.path.basename(path)
-            )
+        # For now, just get the first selected item
+        index = selected_items[0]
+        name = index.data(Qt.UserRole)
+        is_dir = index.data(Qt.UserRole + 1)
+        
+        # Get the current path in the remote panel
+        remote_path = self.remote_panel.current_path
+        
+        if is_dir:
+            # If it's a directory, just use the remote path
+            source_path = os.path.join(self.local_panel.current_path, name)
+            destination_path = remote_path
+        else:
+            # If it's a file, ask where to upload
+            destination_path, _ = QFileDialog.getSaveFileName(self, "Upload File", remote_path)
+            source_path = os.path.join(self.local_panel.current_path, name)
+        
+        if destination_path:
+            # Start the transfer
+            transfer_id = self.transfer_manager.upload_file(
+                source_path, destination_path, self.on_transfer_progress)
             
-            # Get connection config
-            config = {}  # This would be properly populated in the real implementation
+            if transfer_id:
+                QMessageBox.information(self, "Upload Started", 
+                                        f"Upload started with ID: {transfer_id}")
+            else:
+                QMessageBox.critical(self, "Upload Failed", "Failed to start upload.")
+    
+    def download_file(self):
+        """Download a file or directory from the remote server"""
+        # Get the selected file or directory from the remote panel
+        selected_items = self.remote_panel.file_view.selectedIndexes()
+        if not selected_items:
+            QMessageBox.warning(self, "No Selection", "Please select a file or directory to download.")
+            return
+        
+        # For now, just get the first selected item
+        index = selected_items[0]
+        name = index.data(Qt.UserRole)
+        is_dir = index.data(Qt.UserRole + 1)
+        
+        # Get the current path in the local panel
+        local_path = self.local_panel.current_path
+        
+        if is_dir:
+            # If it's a directory, just use the local path
+            source_path = os.path.join(self.remote_panel.current_path, name)
+            destination_path = local_path
+        else:
+            # If it's a file, ask where to download
+            destination_path, _ = QFileDialog.getSaveFileName(self, "Download File", local_path)
+            source_path = os.path.join(self.remote_panel.current_path, name)
+        
+        if destination_path:
+            # Start the transfer
+            transfer_id = self.transfer_manager.download_file(
+                source_path, destination_path, self.on_transfer_progress)
             
-            self.transfer_manager.queue_download(
-                path, local_path, config
-            )
-            
-            self.status_bar.showMessage(f"Download queued: {path}")
+            if transfer_id:
+                QMessageBox.information(self, "Download Started", 
+                                        f"Download started with ID: {transfer_id}")
+            else:
+                QMessageBox.critical(self, "Download Failed", "Failed to start download.")
+    
+    def server_to_server_transfer(self):
+        """Transfer a file or directory between two servers"""
+        # This is a placeholder for the server-to-server transfer implementation
+        QMessageBox.information(self, "Server to Server Transfer", 
+                                "This feature is not yet implemented.")
+    
+    def on_transfer_progress(self, transfer_id, transferred, total):
+        """Update the transfer progress in the UI"""
+        # Find the transfer in the active table
+        table = self.transfer_panel.active_table
+        for row in range(table.rowCount()):
+            if int(table.item(row, 0).text()) == transfer_id:
+                # Update the progress column
+                progress_item = QTableWidgetItem(f"{transferred} / {total}")
+                table.setItem(row, 5, progress_item)
+                break
     
     def show_about(self):
         """Show the about dialog"""
         QMessageBox.about(self, "About FilePilot",
-                        "FilePilot SFTP Client\n\n"
-                        "A cross-platform SFTP client with advanced features.\n\n"
-                        "© 2025")
-    
-    def closeEvent(self, event):
-        """Handle window close event"""
-        # Stop the transfer manager
-        self.transfer_manager.stop()
-        event.accept()
+                          "<h2>FilePilot SFTP Client</h2>"
+                          "<p>Version 1.0</p>"
+                          "<p>A simple SFTP client using PyQt and Paramiko.</p>"
+                          "<p>Copyright © 2023 Your Company</p>"
+                          "<p><a href='https://www.yourcompany.com'>www.yourcompany.com</a></p>",
+                          QMessageBox.Ok)
 
 
 def run_app():
-    """Run the SFTP client application"""
+    """
+    Initialize and launch the FilePilot application.
+    """
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
+    window.refresh_connections()
     sys.exit(app.exec_())

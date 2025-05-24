@@ -3,6 +3,7 @@ import os
 import json
 import logging
 import time
+import stat
 from typing import Dict, Optional, Union, Tuple, Callable
 
 class SFTPClient:
@@ -100,46 +101,188 @@ class SFTPClient:
             return False
             
         try:
+            # Check if local file exists
+            if not os.path.exists(local_path):
+                self.logger.error(f"Local file does not exist: {local_path}")
+                return False
+            
+            # Normalize the remote path (handle both Windows and Unix-style paths)
+            remote_path = remote_path.replace('\\', '/')
+            
+            # Handle cases where the remote path ends with a directory separator
+            if remote_path.endswith('/'):
+                local_filename = os.path.basename(local_path)
+                remote_path = f"{remote_path}{local_filename}"
+                self.logger.info(f"Remote path is a directory, appending filename: {remote_path}")
+            
+            # Check if remote path is a directory
+            try:
+                remote_stat = self.sftp.stat(remote_path)
+                if stat.S_ISDIR(remote_stat.st_mode):
+                    # It's a directory, append the local filename
+                    local_filename = os.path.basename(local_path)
+                    remote_path = f"{remote_path}/{local_filename}"
+                    self.logger.info(f"Remote path is a directory, appending filename: {remote_path}")
+            except FileNotFoundError:
+                # Path doesn't exist yet, which is fine for a new file upload
+                pass
+            except Exception as e:
+                self.logger.warning(f"Error checking remote path type: {str(e)}")
+            
+            # Check if remote directory exists, and create it if it doesn't
+            remote_dir = os.path.dirname(remote_path)
+            if remote_dir:
+                try:
+                    self.sftp.stat(remote_dir)
+                    self.logger.info(f"Remote directory exists: {remote_dir}")
+                except FileNotFoundError:
+                    self.logger.info(f"Remote directory doesn't exist, creating: {remote_dir}")
+                    try:
+                        # Create directories recursively
+                        self._create_remote_directory(remote_dir)
+                    except PermissionError as e:
+                        self.logger.error(f"Permission denied creating directory {remote_dir}: {str(e)}")
+                        return False
+                    except Exception as dir_err:
+                        self.logger.error(f"Failed to create remote directory: {str(dir_err)}")
+                        return False
+            
             file_size = os.path.getsize(local_path)
             chunk_size = max(file_size // chunks, 1024)  # Ensure minimum chunk size
             
             self.logger.info(f"Starting upload: '{local_path}' -> '{remote_path}'")
             self.logger.info(f"File Size: {file_size} bytes (~{file_size / (1024**3):.2f} GB), Chunk Size: {chunk_size} bytes")
             
-            with open(local_path, 'rb') as local_file:
-                with self.sftp.open(remote_path, 'wb') as remote_file:
-                    bytes_transferred = 0
-                    start_time = time.time()
+            # Check if we have write permission by attempting to create a temporary file
+            temp_test_path = f"{remote_dir}/.filepilot_test_{int(time.time())}"
+            try:
+                with self.sftp.open(temp_test_path, 'wb') as test_file:
+                    test_file.write(b'test')
+                self.sftp.remove(temp_test_path)
+                self.logger.info("Successfully verified write permission")
+            except Exception as perm_err:
+                self.logger.error(f"Cannot write to destination directory: {str(perm_err)}")
+                return False
+            
+            # Check disk space on remote server if possible
+            try:
+                # This is implementation-specific and might not work on all servers
+                channel = self.ssh.get_transport().open_session()
+                channel.exec_command(f"df -P {remote_dir} | tail -1 | awk '{{print $4}}'")
+                stdout = channel.makefile('r')
+                free_space_kb = int(stdout.read().strip())
+                free_space_bytes = free_space_kb * 1024
+                
+                if file_size > free_space_bytes:
+                    self.logger.error(f"Not enough disk space on remote server. Required: {file_size} bytes, Available: {free_space_bytes} bytes")
+                    return False
                     
-                    while True:
-                        chunk_data = local_file.read(chunk_size)
-                        if not chunk_data:
-                            break
+                self.logger.info(f"Sufficient disk space available: {free_space_bytes} bytes")
+            except Exception as space_err:
+                # Can't check disk space, just log and continue
+                self.logger.warning(f"Could not check disk space on remote server: {str(space_err)}")
+            
+            # Start the actual file upload
+            try:
+                with open(local_path, 'rb') as local_file:
+                    with self.sftp.open(remote_path, 'wb') as remote_file:
+                        bytes_transferred = 0
+                        start_time = time.time()
+                        
+                        while True:
+                            chunk_data = local_file.read(chunk_size)
+                            if not chunk_data:
+                                break
+                                
+                            remote_file.write(chunk_data)
+                            remote_file.flush()
                             
-                        remote_file.write(chunk_data)
-                        remote_file.flush()
-                        
-                        bytes_transferred += len(chunk_data)
-                        percent = (bytes_transferred / file_size) * 100
-                        
-                        # Call the progress callback if provided
-                        if progress_callback:
-                            progress_callback(bytes_transferred, file_size, percent)
-                        
-                        # Calculate and log transfer rate
-                        elapsed_time = max(time.time() - start_time, 0.1)
-                        transfer_rate = bytes_transferred / elapsed_time / (1024 * 1024)  # MB/s
-                        
-                        self.logger.info(f"Progress: {bytes_transferred/(1024**3):.2f} GB of {file_size/(1024**3):.2f} GB "
-                                        f"({percent:.1f}%) at {transfer_rate:.2f} MB/s")
+                            bytes_transferred += len(chunk_data)
+                            percent = (bytes_transferred / file_size) * 100
+                            
+                            # Call the progress callback if provided
+                            if progress_callback:
+                                progress_callback(bytes_transferred, file_size, percent)
+                            
+                            # Calculate and log transfer rate
+                            elapsed_time = max(time.time() - start_time, 0.1)
+                            transfer_rate = bytes_transferred / elapsed_time / (1024 * 1024)  # MB/s
+                            
+                            self.logger.info(f"Progress: {bytes_transferred/(1024**3):.2f} GB of {file_size/(1024**3):.2f} GB "
+                                            f"({percent:.1f}%) at {transfer_rate:.2f} MB/s")
+            except PermissionError as pe:
+                self.logger.error(f"Permission denied writing to {remote_path}: {str(pe)}")
+                return False
+            except IOError as ioe:
+                self.logger.error(f"I/O error writing to {remote_path}: {str(ioe)}")
+                return False
+            except Exception as upload_err:
+                self.logger.error(f"Error during file upload: {str(upload_err)}")
+                return False
+            
+            # Verify the file was uploaded correctly
+            try:
+                remote_stat = self.sftp.stat(remote_path)
+                if remote_stat.st_size != file_size:
+                    self.logger.error(f"File size mismatch after upload: Local {file_size} bytes, Remote {remote_stat.st_size} bytes")
+                    return False
+            except Exception as verify_err:
+                self.logger.error(f"Failed to verify uploaded file: {str(verify_err)}")
+                return False
                         
             self.logger.info(f"File upload completed successfully: {local_path} -> {remote_path}")
             return True
             
+        except PermissionError as perr:
+            self.logger.error(f"Upload failed: Permission denied: {str(perr)}")
+            return False
+        except IOError as ioerr:
+            self.logger.error(f"Upload failed: I/O error: {str(ioerr)}")
+            return False
         except Exception as e:
             self.logger.error(f"Upload failed: {str(e)}")
             return False
             
+    def _create_remote_directory(self, path):
+        """
+        Create a remote directory recursively.
+        
+        Args:
+            path: Remote directory path to create
+        """
+        if not path:
+            return
+            
+        path = path.replace('\\', '/')  # Normalize path separators
+        
+        # Split the path into parts and create each directory level
+        parts = path.split('/')
+        current = ""
+        
+        for part in parts:
+            if not part:
+                continue  # Skip empty parts (like leading /)
+                
+            if current:
+                current = f"{current}/{part}"
+            else:
+                current = part
+                
+            try:
+                self.sftp.stat(current)
+                # Directory exists, continue to next part
+            except FileNotFoundError:
+                # Directory doesn't exist, create it
+                self.logger.info(f"Creating directory: {current}")
+                try:
+                    self.sftp.mkdir(current)
+                except Exception as e:
+                    if "already exists" in str(e).lower():
+                        # Race condition - directory was created between check and mkdir
+                        pass
+                    else:
+                        raise
+
     def download_file(self, 
                      remote_path: str, 
                      local_path: str, 
