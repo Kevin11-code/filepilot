@@ -1,0 +1,7 @@
+{
+  "host": "your.server.com",
+  "port": 22,
+  "username": "your_user",
+  "password": "your_password",          // OR leave blank if using key
+  "key_file": ""                        // e.g., "/home/user/.ssh/id_rsa"
+}
