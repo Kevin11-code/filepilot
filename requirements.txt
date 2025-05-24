@@ -1,0 +1,4 @@
+paramiko>=2.7.0
+PyQt5>=5.15.0
+keyring>=21.0.0
+cryptography>=3.0
