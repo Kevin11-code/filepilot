@@ -7,10 +7,10 @@ from PyQt5.QtWidgets import (
     QLabel, QLineEdit, QTabWidget, QFileDialog, QMessageBox, QTreeView, 
     QHeaderView, QAbstractItemView, QProgressBar, QMenu, QAction, QComboBox,
     QDialog, QDialogButtonBox, QFormLayout, QSpinBox, QCheckBox, QTableWidget,
-    QTableWidgetItem, QSplitter, QFrame, QInputDialog
+    QTableWidgetItem, QSplitter, QFrame, QInputDialog, QStyle
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QModelIndex, QSize, QSettings
-from PyQt5.QtGui import QIcon, QStandardItemModel, QStandardItem
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QModelIndex, QSize, QSettings, QObject
+from PyQt5.QtGui import QIcon, QStandardItemModel, QStandardItem, QFont
 
 from code.core.auth_manager import AuthManager
 from code.core.transfer_manager import TransferManager
@@ -23,6 +23,25 @@ from code.gui.conn_manager import ConnectionManagerDialog
 
 
 
+class TransferSignalBridge(QObject):
+    """
+    Bridge class to safely emit signals from transfer worker threads to the UI thread.
+    Solves the QObject timer thread issues by ensuring all Qt operations happen on the main thread.
+    """
+    # Define a signal that will be emitted when transfer progress updates
+    progressUpdated = pyqtSignal(int, int, int)  # transfer_id, bytes_transferred, total_bytes
+    
+    def __init__(self):
+        super().__init__()
+        
+    def update_progress(self, transfer_id, bytes_transferred, total_bytes):
+        """
+        This method is called from worker threads, but safely emits a signal
+        that will be processed on the main Qt thread
+        """
+        self.progressUpdated.emit(transfer_id, bytes_transferred, total_bytes)
+
+
 class MainWindow(QMainWindow):
     """Main application window for the SFTP client"""
     
@@ -31,6 +50,13 @@ class MainWindow(QMainWindow):
         self.auth_manager = AuthManager()
         self.transfer_manager = TransferManager()
         self.sftp_client = None
+        
+        # Dictionary to track downloads and their destination paths
+        self.active_downloads = {}
+        
+        # Create and initialize the signal bridge for thread-safe UI updates
+        self.signal_bridge = TransferSignalBridge()
+        self.signal_bridge.progressUpdated.connect(self.on_transfer_progress)
         
         self.setup_ui()
         self.setup_logger()
@@ -52,17 +78,71 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("FilePilot SFTP Client")
         self.setMinimumSize(1000, 600)
         
+        # Set application style
+        self.setStyleSheet("""
+            QMainWindow {
+                background-color: #f5f5f5;
+            }
+            QSplitter::handle {
+                background-color: #cccccc;
+            }
+            QStatusBar {
+                background-color: #f0f0f0;
+                border-top: 1px solid #ddd;
+                padding: 2px;
+                color: #333;
+            }
+            QMenuBar {
+                background-color: #f0f0f0;
+                border-bottom: 1px solid #ddd;
+            }
+            QMenuBar::item {
+                padding: 5px 10px;
+                margin: 0px;
+                background-color: transparent;
+            }
+            QMenuBar::item:selected {
+                background-color: #e0e0e0;
+                border-radius: 2px;
+            }
+            QMenu {
+                background-color: #ffffff;
+                border: 1px solid #cccccc;
+                padding: 5px;
+            }
+            QMenu::item {
+                padding: 5px 25px 5px 30px;
+                border-radius: 2px;
+            }
+            QMenu::item:selected {
+                background-color: #5c9eff;
+                color: white;
+            }
+            QMenu::separator {
+                height: 1px;
+                background-color: #dddddd;
+                margin: 4px 0px;
+            }
+            QMessageBox {
+                background-color: #ffffff;
+            }
+        """)
+        
         # Central widget
         central_widget = QWidget()
         main_layout = QVBoxLayout(central_widget)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setSpacing(5)
         
         # Split view with file panels and transfer panel
         splitter = QSplitter(Qt.Vertical)
+        splitter.setHandleWidth(6)  # Wider handle for easier resizing
         
         # File panels container
         file_panels = QWidget()
         file_layout = QHBoxLayout(file_panels)
         file_layout.setContentsMargins(0, 0, 0, 0)
+        file_layout.setSpacing(6)
         
         # Local file panel
         self.local_panel = FilePanel(is_remote=False)
@@ -94,7 +174,7 @@ class MainWindow(QMainWindow):
         
         main_layout.addWidget(splitter)
         
-        # Status bar
+        # Status bar with modern styling
         self.status_bar = self.statusBar()
         self.status_bar.showMessage("Ready")
         
@@ -106,45 +186,58 @@ class MainWindow(QMainWindow):
         
         # Initialize the local panel with home directory
         self.local_panel.load_directory(os.path.expanduser('~'))
-    
+        
+        # Set application font
+        font = QFont()
+        font.setFamily("Arial")
+        font.setPointSize(9)
+        QApplication.setFont(font)
+        
     def create_menus(self):
-        """Create the application menu bar"""
+        """Create the application menu bar with icons"""
         # File menu
         file_menu = self.menuBar().addMenu("File")
         
-        new_conn_action = QAction("New Connection...", self)
+        new_conn_action = QAction(self.style().standardIcon(QStyle.SP_ComputerIcon),
+                                 "New Connection...", self)
         new_conn_action.triggered.connect(self.new_connection)
         file_menu.addAction(new_conn_action)
         
-        manage_conn_action = QAction("Manage Connections...", self)
+        manage_conn_action = QAction(self.style().standardIcon(QStyle.SP_FileDialogListView),
+                                    "Manage Connections...", self)
         manage_conn_action.triggered.connect(self.manage_connections)
         file_menu.addAction(manage_conn_action)
         
         file_menu.addSeparator()
         
-        exit_action = QAction("Exit", self)
+        exit_action = QAction(self.style().standardIcon(QStyle.SP_DialogCloseButton), 
+                             "Exit", self)
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
         
         # Transfer menu
         transfer_menu = self.menuBar().addMenu("Transfer")
         
-        upload_action = QAction("Upload...", self)
+        upload_action = QAction(self.style().standardIcon(QStyle.SP_ArrowUp), 
+                               "Upload...", self)
         upload_action.triggered.connect(self.upload_file)
         transfer_menu.addAction(upload_action)
         
-        download_action = QAction("Download...", self)
+        download_action = QAction(self.style().standardIcon(QStyle.SP_ArrowDown),
+                                 "Download...", self)
         download_action.triggered.connect(self.download_file)
         transfer_menu.addAction(download_action)
         
-        server_to_server_action = QAction("Server to Server Transfer...", self)
+        server_to_server_action = QAction(self.style().standardIcon(QStyle.SP_DirLinkIcon),
+                                         "Server to Server Transfer...", self)
         server_to_server_action.triggered.connect(self.server_to_server_transfer)
         transfer_menu.addAction(server_to_server_action)
         
         # Help menu
         help_menu = self.menuBar().addMenu("Help")
         
-        about_action = QAction("About", self)
+        about_action = QAction(self.style().standardIcon(QStyle.SP_DialogHelpButton),
+                              "About", self)
         about_action.triggered.connect(self.show_about)
         help_menu.addAction(about_action)
         
@@ -239,12 +332,14 @@ class MainWindow(QMainWindow):
             if not destination_path:
                 return
         
-        # Start the transfer
+        # Start the transfer using the signal bridge for thread-safe callbacks
         transfer_id = self.transfer_manager.upload_file(
-            source_path, destination_path, self.on_transfer_progress)
+            source_path, destination_path, self.signal_bridge.update_progress)
         
         if transfer_id:
             self.status_bar.showMessage(f"Upload started: {name} → {destination_path}", 5000)
+            # Force immediate update of the transfer panel
+            self.transfer_panel.update_transfers()
         else:
             QMessageBox.critical(self, "Upload Failed", "Failed to start upload.")
     
@@ -280,12 +375,17 @@ class MainWindow(QMainWindow):
             if not destination_path:
                 return
         
-        # Start the transfer
+        # Start the transfer using the signal bridge for thread-safe callbacks
         transfer_id = self.transfer_manager.download_file(
-            source_path, destination_path, self.on_transfer_progress)
+            source_path, destination_path, self.signal_bridge.update_progress)
         
         if transfer_id:
+            # Track the download with its destination path
+            self.active_downloads[transfer_id] = destination_path
+            
             self.status_bar.showMessage(f"Download started: {name} → {destination_path}", 5000)
+            # Force immediate update of the transfer panel
+            self.transfer_panel.update_transfers()
         else:
             QMessageBox.critical(self, "Download Failed", "Failed to start download.")
     
@@ -315,13 +415,15 @@ class MainWindow(QMainWindow):
             source_path = os.path.join(self.local_panel.current_path, name)
         
         if destination_path:
-            # Start the transfer
+            # Start the transfer using the signal bridge for thread-safe callbacks
             transfer_id = self.transfer_manager.upload_file(
-                source_path, destination_path, self.on_transfer_progress)
+                source_path, destination_path, self.signal_bridge.update_progress)
             
             if transfer_id:
                 QMessageBox.information(self, "Upload Started", 
                                         f"Upload started with ID: {transfer_id}")
+                # Force immediate update of the transfer panel
+                self.transfer_panel.update_transfers()
             else:
                 QMessageBox.critical(self, "Upload Failed", "Failed to start upload.")
     
@@ -351,13 +453,18 @@ class MainWindow(QMainWindow):
             source_path = os.path.join(self.remote_panel.current_path, name)
         
         if destination_path:
-            # Start the transfer
+            # Start the transfer using the signal bridge for thread-safe callbacks
             transfer_id = self.transfer_manager.download_file(
-                source_path, destination_path, self.on_transfer_progress)
+                source_path, destination_path, self.signal_bridge.update_progress)
             
             if transfer_id:
+                # Track the download with its destination path
+                self.active_downloads[transfer_id] = destination_path
+                
                 QMessageBox.information(self, "Download Started", 
                                         f"Download started with ID: {transfer_id}")
+                # Force immediate update of the transfer panel
+                self.transfer_panel.update_transfers()
             else:
                 QMessageBox.critical(self, "Download Failed", "Failed to start download.")
     
@@ -371,12 +478,41 @@ class MainWindow(QMainWindow):
         """Update the transfer progress in the UI"""
         # Find the transfer in the active table
         table = self.transfer_panel.active_table
+        found = False
+        
         for row in range(table.rowCount()):
-            if int(table.item(row, 0).text()) == transfer_id:
+            if table.item(row, 0) and int(table.item(row, 0).text()) == transfer_id:
                 # Update the progress column
-                progress_item = QTableWidgetItem(f"{transferred} / {total}")
+                progress_item = QTableWidgetItem(f"{transferred / total * 100:.1f}%")
                 table.setItem(row, 5, progress_item)
+                
+                # Update size column
+                size_text = f"{transferred / (1024*1024):.2f} MB / {total / (1024*1024):.2f} MB"
+                table.setItem(row, 7, QTableWidgetItem(size_text))
+                
+                found = True
                 break
+        
+        # Check if this is a download and if it's complete
+        if transfer_id in self.active_downloads and transferred >= total and total > 0:
+            # Get the destination directory
+            dest_path = self.active_downloads[transfer_id]
+            dest_dir = os.path.dirname(dest_path)
+            
+            # Force refresh of the local panel
+            if os.path.exists(dest_path):
+                # If local panel is showing the destination directory
+                if dest_dir == self.local_panel.current_path:
+                    # Use QTimer to schedule refresh after a slight delay
+                    QTimer.singleShot(500, self.local_panel.refresh)
+                    self.status_bar.showMessage(f"Download completed: {os.path.basename(dest_path)}", 5000)
+                
+                # Remove from active downloads since it's complete
+                del self.active_downloads[transfer_id]
+        
+        # If transfer wasn't found in the table, request UI update
+        if not found:
+            self.transfer_panel.update_transfers()
     
     def show_about(self):
         """Show the about dialog"""

@@ -509,6 +509,13 @@ class TransferManager:
                 if elapsed > 0:
                     transfer.transfer_rate = bytes_transferred / elapsed / (1024 * 1024)  # MB/s
                 
+                # Call the progress callback if it exists
+                if hasattr(transfer, '_progress_callback') and transfer._progress_callback:
+                    try:
+                        transfer._progress_callback(transfer.id, bytes_transferred, total_bytes)
+                    except Exception as e:
+                        self.logger.error(f"Error in progress callback: {str(e)}")
+                
                 # Check if transfer was canceled or paused
                 if transfer.status in [TransferStatus.CANCELED, TransferStatus.PAUSED]:
                     raise InterruptedError("Transfer was canceled or paused")
@@ -676,11 +683,15 @@ class TransferManager:
             transfer: The transfer item
             callback: The callback function
         """
-        # Save original update_progress function
-        original_update_progress = None
+        # Define an attribute to store the original function if needed in future
+        if not hasattr(transfer, '_original_update_progress'):
+            transfer._original_update_progress = None
         
-        # Define a new progress function that calls both the original and the callback
+        # Define a wrapper to call both original and our callback
         def progress_wrapper(bytes_transferred, total_bytes, percent):
-            if original_update_progress:
-                original_update_progress(bytes_transferred, total_bytes, percent)
+            if transfer._original_update_progress:
+                transfer._original_update_progress(bytes_transferred, total_bytes, percent)
             callback(transfer.id, bytes_transferred, total_bytes)
+            
+        # Store the callback directly on the transfer object
+        transfer._progress_callback = callback
