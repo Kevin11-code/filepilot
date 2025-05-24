@@ -1,0 +1,266 @@
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QTreeView, QHeaderView, QAbstractItemView, QMessageBox, QComboBox, QMenu
+from PyQt5.QtCore import pyqtSignal, Qt
+from PyQt5.QtGui import QStandardItemModel, QStandardItem
+import os
+import time
+from filepilot_code.gui.conn_dialog import ConnectionDialog
+from filepilot_code.core.sftp_client import SFTPClient
+
+class FilePanel(QWidget):
+    """
+    Panel for displaying files in local or remote location
+    """
+    itemSelected = pyqtSignal(str, bool)  # Path, isDir
+    
+    def __init__(self, parent=None, is_remote=False):
+        super().__init__(parent)
+        self.is_remote = is_remote
+        self.current_path = ""
+        self.client = None
+        self.setup_ui()
+        
+    def setup_ui(self):
+        """Set up the panel UI"""
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Path display and navigation
+        path_layout = QHBoxLayout()
+        
+        self.path_label = QLabel("Path:")
+        self.path_edit = QLineEdit()
+        self.path_edit.returnPressed.connect(self.navigate_to_path)
+        
+        self.up_button = QPushButton("↑")
+        self.up_button.clicked.connect(self.navigate_up)
+        self.up_button.setMaximumWidth(30)
+        
+        self.refresh_button = QPushButton("⟳")
+        self.refresh_button.clicked.connect(self.refresh)
+        self.refresh_button.setMaximumWidth(30)
+        
+        path_layout.addWidget(self.path_label)
+        path_layout.addWidget(self.path_edit)
+        path_layout.addWidget(self.up_button)
+        path_layout.addWidget(self.refresh_button)
+        
+        layout.addLayout(path_layout)
+        
+        # File tree view
+        self.file_model = QStandardItemModel()
+        self.file_model.setHorizontalHeaderLabels(["Name", "Size", "Type", "Modified"])
+        
+        self.file_view = QTreeView()
+        self.file_view.setModel(self.file_model)
+        self.file_view.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.file_view.header().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.file_view.doubleClicked.connect(self.item_double_clicked)
+        self.file_view.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.file_view.customContextMenuRequested.connect(self.show_context_menu)
+        
+        layout.addWidget(self.file_view)
+        
+        # If remote, add connection selector
+        if self.is_remote:
+            conn_layout = QHBoxLayout()
+            self.conn_label = QLabel("Connection:")
+            self.conn_combo = QComboBox()
+            self.conn_combo.currentTextChanged.connect(self.connection_changed)
+            self.conn_button = QPushButton("New...")
+            self.conn_button.clicked.connect(self.new_connection)
+            
+            conn_layout.addWidget(self.conn_label)
+            conn_layout.addWidget(self.conn_combo)
+            conn_layout.addWidget(self.conn_button)
+            
+            layout.insertLayout(0, conn_layout)
+    
+    def set_client(self, client):
+        """Set the SFTP client for remote panel"""
+        self.client = client
+        self.refresh()
+    
+    def connection_changed(self, connection_name):
+        """Handle change of selected connection"""
+        if not connection_name:
+            self.client = None
+            return
+            
+        try:
+            # Get connection details from auth manager
+            parent_window = self.window()
+            if parent_window and hasattr(parent_window, 'auth_manager'):
+                auth_manager = parent_window.auth_manager
+                connection = auth_manager.get_connection(connection_name)
+                
+                if connection:
+                    # Create new SFTP client
+                    client = SFTPClient()
+                    
+                    # Build connection parameters
+                    params = {
+                        'host': connection.get('host', ''),
+                        'port': connection.get('port', 22),
+                        'username': connection.get('username', '')
+                    }
+                    
+                    if connection.get('key_path'):
+                        params['key_path'] = connection.get('key_path')
+                        if 'passphrase' in connection:
+                            params['passphrase'] = connection.get('passphrase')
+                    else:
+                        params['password'] = connection.get('password', '')
+                    
+                    # Try to connect
+                    if client.connect(**params):
+                        self.set_client(client)
+                        if hasattr(parent_window, 'status_bar'):
+                            parent_window.status_bar.showMessage(f"Connected to {connection_name}")
+                    else:
+                        QMessageBox.critical(self, "Error", "Failed to connect to server.")
+            else:
+                QMessageBox.warning(self, "Error", "Could not access connection manager.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Connection error: {str(e)}")
+    
+    def new_connection(self):
+        """Open dialog to create a new connection"""
+        # Get the parent window to access the auth_manager
+        parent_window = self.window()
+        auth_manager = parent_window.auth_manager if hasattr(parent_window, 'auth_manager') else None
+        
+        dialog = ConnectionDialog(self, auth_manager)
+        if dialog.exec_():
+            # Refresh connection list
+            if hasattr(parent_window, 'refresh_connections'):
+                parent_window.refresh_connections()
+    
+    def navigate_to_path(self):
+        """Navigate to the path entered in the path field"""
+        path = self.path_edit.text()
+        self.load_directory(path)
+    
+    def navigate_up(self):
+        """Navigate to the parent directory"""
+        if self.current_path:
+            parent = os.path.dirname(self.current_path)
+            self.load_directory(parent)
+    
+    def refresh(self):
+        """Refresh the current directory"""
+        if self.current_path:
+            self.load_directory(self.current_path)
+        else:
+            # Load default path
+            if self.is_remote and self.client:
+                self.load_directory('.')
+            elif not self.is_remote:
+                self.load_directory(os.path.expanduser('~'))
+    
+    def load_directory(self, path):
+        """Load directory contents into the view"""
+        self.file_model.removeRows(0, self.file_model.rowCount())
+        
+        try:
+            if self.is_remote and self.client:
+                # Remote directory listing
+                files = self.client.list_directory(path)
+                self.current_path = path
+                self.path_edit.setText(path)
+                
+                for name, size, ftype, modified in files:
+                    self.add_file_item(name, size, ftype, modified)
+            elif not self.is_remote:
+                # Local directory listing
+                if os.path.isdir(path):
+                    self.current_path = path
+                    self.path_edit.setText(path)
+                    
+                    entries = os.listdir(path)
+                    for entry in entries:
+                        full_path = os.path.join(path, entry)
+                        if os.path.isdir(full_path):
+                            ftype = 'dir'
+                            size = 0
+                        else:
+                            ftype = 'file'
+                            size = os.path.getsize(full_path)
+                        
+                        modified = time.strftime('%Y-%m-%d %H:%M:%S', 
+                                               time.localtime(os.path.getmtime(full_path)))
+                        
+                        self.add_file_item(entry, size, ftype, modified)
+                else:
+                    raise ValueError(f"Not a directory: {path}")
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to load directory: {str(e)}")
+    
+    def add_file_item(self, name, size, ftype, modified):
+        """Add a file item to the model"""
+        name_item = QStandardItem(name)
+        name_item.setData(name, Qt.UserRole)
+        name_item.setData(ftype == 'dir', Qt.UserRole + 1)
+        
+        if ftype == 'dir':
+            size_str = "<DIR>"
+        else:
+            if size < 1024:
+                size_str = f"{size} B"
+            elif size < 1024 * 1024:
+                size_str = f"{size/1024:.1f} KB"
+            elif size < 1024 * 1024 * 1024:
+                size_str = f"{size/(1024*1024):.1f} MB"
+            else:
+                size_str = f"{size/(1024*1024*1024):.2f} GB"
+        
+        size_item = QStandardItem(size_str)
+        type_item = QStandardItem(ftype)
+        modified_item = QStandardItem(modified)
+        
+        self.file_model.appendRow([name_item, size_item, type_item, modified_item])
+    
+    def item_double_clicked(self, index):
+        """Handle double-click on an item"""
+        if index.column() != 0:  # Only process if name column was clicked
+            return
+            
+        name_index = self.file_model.index(index.row(), 0)
+        is_dir = name_index.data(Qt.UserRole + 1)
+        name = name_index.data(Qt.UserRole)
+        
+        if is_dir:
+            # Navigate to this directory
+            new_path = os.path.join(self.current_path, name)
+            self.load_directory(new_path)
+        else:
+            # Emit signal that file was selected
+            full_path = os.path.join(self.current_path, name)
+            self.itemSelected.emit(full_path, False)
+    
+    def show_context_menu(self, position):
+        """Show context menu for file/directory operations"""
+        menu = QMenu()
+        
+        # Add actions based on selection
+        indexes = self.file_view.selectedIndexes()
+        if indexes:
+            row = indexes[0].row()
+            name_index = self.file_model.index(row, 0)
+            name = name_index.data(Qt.UserRole)
+            is_dir = name_index.data(Qt.UserRole + 1)
+            
+            if is_dir:
+                menu.addAction("Open", lambda: self.load_directory(
+                    os.path.join(self.current_path, name)))
+            
+            # Transfer actions will be implemented by the main window
+            # These actions just signal the main window
+            if self.is_remote:
+                menu.addAction("Download", lambda: self.itemSelected.emit(
+                    os.path.join(self.current_path, name), is_dir))
+            else:
+                menu.addAction("Upload", lambda: self.itemSelected.emit(
+                    os.path.join(self.current_path, name), is_dir))
+        
+        menu.exec_(self.file_view.viewport().mapToGlobal(position))
+
