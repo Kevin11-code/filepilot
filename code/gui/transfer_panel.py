@@ -1,7 +1,18 @@
+import logging
+import os
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QTabWidget, QTableWidget, QHBoxLayout, QPushButton
 from PyQt5.QtWidgets import QAbstractItemView, QHeaderView, QTableWidgetItem, QMessageBox
 from PyQt5.QtCore import QTimer, Qt
 
+# Ensure log directory exists
+os.makedirs("logs", exist_ok=True)
+
+logging.basicConfig(
+    filename='logs/filepilot.log',
+    filemode='a',
+    format='%(asctime)s - %(message)s',
+    level=logging.INFO
+)
 
 class TransferPanel(QWidget):
     """Panel for displaying and managing file transfers"""
@@ -138,6 +149,14 @@ class TransferPanel(QWidget):
                 self._set_row_background(table, row, Qt.red, 0.2)
             elif 'PAUSED' in transfer['status']:
                 self._set_row_background(table, row, Qt.yellow, 0.2)
+            
+            log_msg = (
+                f"ID: {transfer['id']} | Type: {transfer['type']} | "
+                f"Source: {transfer['source']} | Destination: {transfer['destination']} | "
+                f"Status: {transfer['status']} | Progress: {transfer['progress']} | "
+                f"Speed: {transfer['rate']} | Size: {transfer['transferred']} / {transfer['total']}"
+            )
+            logging.info(log_msg)
     
     def _set_row_background(self, table, row, color, alpha=0.1):
         """Set background color for a row"""
