@@ -15,6 +15,8 @@ class SFTPClient:
         """Initialize the SFTP client with an optional logger."""
         self.ssh = None
         self.sftp = None
+        # Store connection configuration after successful connection
+        self.connection_config = None 
         if logger:
             self.logger = logger
         else:
@@ -62,6 +64,16 @@ class SFTPClient:
                 
             self.sftp = self.ssh.open_sftp()
             self.logger.info(f"Connected successfully to {host}")
+            
+            # Store the connection config for later use (e.g., in FilePanel.on_connection_selected)
+            self.connection_config = {
+                'host': host,
+                'port': port,
+                'username': username,
+                'password': password, # Note: storing password here is generally discouraged for security
+                'key_path': key_path,
+                'passphrase': passphrase
+            }
             return True
             
         except Exception as e:
@@ -74,15 +86,18 @@ class SFTPClient:
         """Close the SFTP and SSH connections."""
         if self.sftp:
             self.sftp.close()
+            self.sftp = None
         if self.ssh:
             self.ssh.close()
+            self.ssh = None
+        self.connection_config = None # Clear stored config
         self.logger.info("Disconnected from server")
             
     def upload_file(self, 
-                   local_path: str, 
-                   remote_path: str, 
-                   chunks: int = 10, 
-                   progress_callback: Callable[[float, float, float], None] = None) -> bool:
+                    local_path: str, 
+                    remote_path: str, 
+                    chunks: int = 10, 
+                    progress_callback: Callable[[float, float, float], None] = None) -> bool:
         """
         Upload a file to the SFTP server with chunking and progress reporting.
         
@@ -209,7 +224,7 @@ class SFTPClient:
                             transfer_rate = bytes_transferred / elapsed_time / (1024 * 1024)  # MB/s
                             
                             self.logger.info(f"Progress: {bytes_transferred/(1024**3):.2f} GB of {file_size/(1024**3):.2f} GB "
-                                            f"({percent:.1f}%) at {transfer_rate:.2f} MB/s")
+                                             f"({percent:.1f}%) at {transfer_rate:.2f} MB/s")
             except PermissionError as pe:
                 self.logger.error(f"Permission denied writing to {remote_path}: {str(pe)}")
                 return False
@@ -243,6 +258,28 @@ class SFTPClient:
             self.logger.error(f"Upload failed: {str(e)}")
             return False
             
+    def rename(self, old_path: str, new_path: str) -> bool:
+        """
+        Rename a file or directory on the SFTP server.
+
+        Args:
+            old_path: The current path of the file/directory.
+            new_path: The new path/name for the file/directory.
+
+        Returns:
+            bool: True if rename successful, False otherwise.
+        """
+        if not self.sftp:
+            self.logger.error("Not connected to SFTP server for rename operation.")
+            return False
+        try:
+            self.sftp.rename(old_path, new_path)
+            self.logger.info(f"Successfully renamed '{old_path}' to '{new_path}'")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to rename '{old_path}' to '{new_path}': {e}")
+            return False
+
     def _create_remote_directory(self, path):
         """
         Create a remote directory recursively.
@@ -284,10 +321,10 @@ class SFTPClient:
                         raise
 
     def download_file(self, 
-                     remote_path: str, 
-                     local_path: str, 
-                     chunks: int = 10, 
-                     progress_callback: Callable[[float, float, float], None] = None) -> bool:
+                      remote_path: str, 
+                      local_path: str, 
+                      chunks: int = 10, 
+                      progress_callback: Callable[[float, float, float], None] = None) -> bool:
         """
         Download a file from the SFTP server with chunking and progress reporting.
         
@@ -339,7 +376,7 @@ class SFTPClient:
                         transfer_rate = bytes_transferred / elapsed_time / (1024 * 1024)  # MB/s
                         
                         self.logger.info(f"Progress: {bytes_transferred/(1024**3):.2f} GB of {file_size/(1024**3):.2f} GB "
-                                        f"({percent:.1f}%) at {transfer_rate:.2f} MB/s")
+                                         f"({percent:.1f}%) at {transfer_rate:.2f} MB/s")
                         
             self.logger.info(f"File download completed successfully: {remote_path} -> {local_path}")
             return True
@@ -349,13 +386,13 @@ class SFTPClient:
             return False
 
     def server_to_server_transfer(self,
-                                source_config: Dict,
-                                dest_config: Dict,
-                                source_path: str,
-                                dest_path: str,
-                                temp_path: str = None,
-                                chunks: int = 10,
-                                progress_callback: Callable[[float, float, float], None] = None) -> bool:
+                                  source_config: Dict,
+                                  dest_config: Dict,
+                                  source_path: str,
+                                  dest_path: str,
+                                  temp_path: str = None,
+                                  chunks: int = 10,
+                                  progress_callback: Callable[[float, float, float], None] = None) -> bool:
         """
         Transfer a file from one server to another via the local system as an intermediary.
         
@@ -373,7 +410,7 @@ class SFTPClient:
         """
         if temp_path is None:
             temp_path = os.path.join(os.path.dirname(__file__), "..", "temp", 
-                                    os.path.basename(source_path))
+                                     os.path.basename(source_path))
         
         # Ensure temp directory exists
         os.makedirs(os.path.dirname(os.path.abspath(temp_path)), exist_ok=True)
@@ -382,7 +419,13 @@ class SFTPClient:
         
         # Connect to source server and download
         source_client = SFTPClient(logger=self.logger)
-        if not source_client.connect(**source_config):
+        # Create a copy of the config and remove the 'name' and 'has_password' keys
+        source_connect_params = source_config.copy()
+        source_connect_params.pop('name', None)
+        source_connect_params.pop('has_password', None)
+        source_connect_params.pop('has_passphrase', None) # Also remove has_passphrase
+        
+        if not source_client.connect(**source_connect_params):
             self.logger.error("Failed to connect to source server")
             return False
             
@@ -401,7 +444,13 @@ class SFTPClient:
                 
         # Connect to destination server and upload
         dest_client = SFTPClient(logger=self.logger)
-        if not dest_client.connect(**dest_config):
+        # Create a copy of the config and remove the 'name' and 'has_password' keys
+        dest_connect_params = dest_config.copy()
+        dest_connect_params.pop('name', None)
+        dest_connect_params.pop('has_password', None)
+        dest_connect_params.pop('has_passphrase', None) # Also remove has_passphrase
+
+        if not dest_client.connect(**dest_connect_params):
             self.logger.error("Failed to connect to destination server")
             if os.path.exists(temp_path):
                 os.remove(temp_path)
@@ -433,18 +482,109 @@ class SFTPClient:
             remote_path: Path to the directory on the server
             
         Returns:
-            list: Directory contents or empty list on error
+            list: Directory contents (list of paramiko.SFTPAttributes) or empty list on error
         """
         if not self.sftp:
             self.logger.error("Not connected to an SFTP server")
             return []
             
         try:
+            # paramiko.SFTPClient.listdir_attr returns a list of paramiko.SFTPAttributes objects
             files = self.sftp.listdir_attr(remote_path)
-            return [(f.filename, f.st_size, 
-                   'dir' if f.st_mode & 0o40000 else 'file', 
-                   time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(f.st_mtime)))
-                   for f in files]
+            return files # Return the raw SFTPAttribute objects
         except Exception as e:
             self.logger.error(f"Failed to list directory {remote_path}: {str(e)}")
             return []
+
+    def remove(self, remote_path: str) -> bool:
+        """
+        Deletes a file on the SFTP server.
+        
+        Args:
+            remote_path: Path to the file on the server.
+            
+        Returns:
+            bool: True if deletion successful, False otherwise.
+        """
+        if not self.sftp:
+            self.logger.error("Not connected to an SFTP server.")
+            return False
+        try:
+            self.sftp.remove(remote_path)
+            self.logger.info(f"Successfully deleted remote file: {remote_path}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to delete remote file {remote_path}: {str(e)}")
+            return False
+
+    def rmdir(self, remote_path: str) -> bool:
+        """
+        Deletes a directory on the SFTP server.
+        Attempts recursive deletion if the directory is not empty.
+        
+        Args:
+            remote_path: Path to the directory on the server.
+            
+        Returns:
+            bool: True if deletion successful, False otherwise.
+        """
+        if not self.sftp:
+            self.logger.error("Not connected to an SFTP server.")
+            return False
+        try:
+            # Try to remove empty directory first
+            self.sftp.rmdir(remote_path)
+            self.logger.info(f"Successfully deleted empty remote directory: {remote_path}")
+            return True
+        except IOError as e:
+            # Directory not empty or other IOError
+            if "Directory not empty" in str(e) or "is not empty" in str(e):
+                self.logger.warning(f"Remote directory {remote_path} is not empty. Attempting recursive deletion.")
+                return self._rmdir_recursive(remote_path)
+            else:
+                self.logger.error(f"Failed to delete remote directory {remote_path}: {str(e)}")
+                return False
+        except Exception as e:
+            self.logger.error(f"Failed to delete remote directory {remote_path}: {str(e)}")
+            return False
+
+    def _rmdir_recursive(self, remote_path: str) -> bool:
+        """
+        Recursively deletes a directory and its contents on the SFTP server.
+        
+        Args:
+            remote_path: Path to the directory to delete recursively.
+            
+        Returns:
+            bool: True if recursive deletion successful, False otherwise.
+        """
+        if not self.sftp:
+            self.logger.error("Not connected to an SFTP server for recursive deletion.")
+            return False
+        
+        try:
+            # List contents
+            for entry in self.sftp.listdir_attr(remote_path):
+                if entry.filename in ('.', '..'):
+                    continue
+                
+                full_entry_path = os.path.join(remote_path, entry.filename).replace('\\', '/')
+                
+                if stat.S_ISDIR(entry.st_mode):
+                    # Recursively delete sub-directory
+                    if not self._rmdir_recursive(full_entry_path):
+                        self.logger.error(f"Failed to recursively delete sub-directory: {full_entry_path}")
+                        return False
+                else:
+                    # Delete file
+                    if not self.remove(full_entry_path):
+                        self.logger.error(f"Failed to delete file during recursive deletion: {full_entry_path}")
+                        return False
+            
+            # After deleting all contents, remove the directory itself
+            self.sftp.rmdir(remote_path)
+            self.logger.info(f"Successfully recursively deleted remote directory: {remote_path}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Error during recursive remote directory deletion of {remote_path}: {str(e)}")
+            return False

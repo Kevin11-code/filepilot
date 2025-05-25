@@ -1,501 +1,510 @@
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QTreeView, QHeaderView, QAbstractItemView, QMessageBox, QComboBox, QMenu, QStyle, QStyledItemDelegate
-from PyQt5.QtCore import pyqtSignal, Qt, QSize
-from PyQt5.QtGui import QStandardItemModel, QStandardItem, QColor, QPalette, QFont
+from PyQt5.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
+    QTreeView, QHeaderView, QAbstractItemView, QMenu, QAction, QInputDialog,
+    QMessageBox, QDialog, QDialogButtonBox, QFormLayout, QComboBox, QCompleter, QStyle
+)
+from PyQt5.QtCore import Qt, QTimer, QModelIndex, QUrl, QSize, QDir, pyqtSignal
+from PyQt5.QtGui import QStandardItemModel, QStandardItem, QDesktopServices, QIcon
+
 import os
-import time
-from code.gui.conn_dialog import ConnectionDialog
+import stat
+import datetime
+from pathlib import Path
+import shutil # Import shutil for recursive local directory deletion
+
+from code.core.auth_manager import AuthManager
 from code.core.sftp_client import SFTPClient
-from code.utils.file_utils import FileIconProvider
 
 class FilePanel(QWidget):
-    """
-    Panel for displaying files in local or remote location
-    """
-    itemSelected = pyqtSignal(str, bool)  # Path, isDir
+    itemSelected = pyqtSignal(str, bool) # path, is_directory
     
     def __init__(self, parent=None, is_remote=False):
         super().__init__(parent)
         self.is_remote = is_remote
-        self.current_path = ""
-        self.client = None
-        self.icon_provider = FileIconProvider()
+        self.client = None # SFTPClient instance for remote, or None for local
+        self.current_path = "" # Initialize current_path attribute
+        self.auth_manager = AuthManager() # Initialize AuthManager
+
         self.setup_ui()
-        
+        self.load_directory(os.path.expanduser("~") if not is_remote else "/") # Initial directory
+
     def setup_ui(self):
-        """Set up the panel UI"""
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(5)  # Tighter spacing for a more modern look
-        
-        # Path display and navigation
-        path_layout = QHBoxLayout()
-        path_layout.setSpacing(5)
-        
-        self.path_label = QLabel("Path:")
-        self.path_label.setStyleSheet("font-weight: bold;")
-        
+        """Sets up the UI elements for the file panel."""
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        # Connection / Path Bar
+        path_bar_layout = QHBoxLayout()
+        path_bar_layout.setContentsMargins(0, 0, 0, 0)
+        path_bar_layout.setSpacing(5)
+
+        if self.is_remote:
+            self.conn_combo = QComboBox()
+            self.conn_combo.setPlaceholderText("Select Connection")
+            self.conn_combo.currentIndexChanged.connect(self.on_connection_selected)
+            self.conn_combo.setMinimumWidth(150)
+            path_bar_layout.addWidget(self.conn_combo)
+
+            self.connect_button = QPushButton("Connect")
+            self.connect_button.clicked.connect(self.connect_to_server)
+            path_bar_layout.addWidget(self.connect_button)
+            
+            self.disconnect_button = QPushButton("Disconnect")
+            self.disconnect_button.clicked.connect(self.disconnect_from_server)
+            self.disconnect_button.setEnabled(False) # Disable initially
+            path_bar_layout.addWidget(self.disconnect_button)
+        else:
+            # For local panel, add a drive/root selection combo if needed
+            pass # Currently no drive selection, just path edit
+
         self.path_edit = QLineEdit()
-        self.path_edit.returnPressed.connect(self.navigate_to_path)
-        self.path_edit.setStyleSheet("""
-            QLineEdit {
-                border: 1px solid #ccc;
-                border-radius: 4px;
-                padding: 3px 5px;
-                background-color: #f8f8f8;
-            }
-            QLineEdit:hover {
-                border-color: #aaa;
-            }
-            QLineEdit:focus {
-                border-color: #5c9eff;
-                background-color: white;
-            }
-        """)
+        self.path_edit.setPlaceholderText("Enter path...")
+        self.path_edit.returnPressed.connect(self.go_to_path)
+        path_bar_layout.addWidget(self.path_edit)
         
-        # Modern buttons with icons from system theme
-        self.up_button = QPushButton()
-        self.up_button.setIcon(self.style().standardIcon(QStyle.SP_ArrowUp))
-        self.up_button.clicked.connect(self.navigate_up)
-        self.up_button.setToolTip("Go to parent directory")
-        self.up_button.setMaximumWidth(30)
-        self.up_button.setStyleSheet("""
-            QPushButton {
-                border: 1px solid #ccc;
-                border-radius: 4px;
-                background-color: #f8f8f8;
-            }
-            QPushButton:hover {
-                background-color: #e0e0e0;
-                border-color: #aaa;
-            }
-            QPushButton:pressed {
-                background-color: #d0d0d0;
-            }
-        """)
-        
-        self.refresh_button = QPushButton()
-        self.refresh_button.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload))
+        self.go_button = QPushButton("Go")
+        self.go_button.clicked.connect(self.go_to_path)
+        path_bar_layout.addWidget(self.go_button)
+
+        self.refresh_button = QPushButton(self.style().standardIcon(QStyle.SP_BrowserReload), "")
+        self.refresh_button.setToolTip("Refresh Directory")
         self.refresh_button.clicked.connect(self.refresh)
-        self.refresh_button.setToolTip("Refresh current directory")
-        self.refresh_button.setMaximumWidth(30)
-        self.refresh_button.setStyleSheet("""
-            QPushButton {
-                border: 1px solid #ccc;
-                border-radius: 4px;
-                background-color: #f8f8f8;
-            }
-            QPushButton:hover {
-                background-color: #e0e0e0;
-                border-color: #aaa;
-            }
-            QPushButton:pressed {
-                background-color: #d0d0d0;
-            }
-        """)
-        
-        path_layout.addWidget(self.path_label)
-        path_layout.addWidget(self.path_edit)
-        path_layout.addWidget(self.up_button)
-        path_layout.addWidget(self.refresh_button)
-        
-        layout.addLayout(path_layout)
-        
-        # File tree view with modern styling
+        self.refresh_button.setFixedSize(QSize(28, 28))
+        self.refresh_button.setIconSize(QSize(20, 20))
+        path_bar_layout.addWidget(self.refresh_button)
+
+        self.up_button = QPushButton(self.style().standardIcon(QStyle.SP_ArrowUp), "")
+        self.up_button.setToolTip("Go Up Directory")
+        self.up_button.clicked.connect(self.go_up_directory)
+        self.up_button.setFixedSize(QSize(28, 28))
+        self.up_button.setIconSize(QSize(20, 20))
+        path_bar_layout.addWidget(self.up_button)
+
+        main_layout.addLayout(path_bar_layout)
+
+        # File List View
         self.file_model = QStandardItemModel()
-        self.file_model.setHorizontalHeaderLabels(["Name", "Size", "Type", "Modified"])
-        
-        # Make all items in the model non-editable
-        self.file_model.itemChanged.connect(self.prevent_edit)
-        
+        self.file_model.setHorizontalHeaderLabels(["Name", "Size", "Type", "Permissions", "Owner", "Group", "Modified"])
+
         self.file_view = QTreeView()
         self.file_view.setModel(self.file_model)
-        self.file_view.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        self.file_view.header().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.file_view.doubleClicked.connect(self.item_double_clicked)
+        self.file_view.setHeaderHidden(False)
+        self.file_view.setRootIsDecorated(False)
+        self.file_view.setSortingEnabled(True)
+        self.file_view.setIndentation(10)
+        self.file_view.setSelectionMode(QAbstractItemView.ExtendedSelection) # Allow multiple selection
+        self.file_view.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.file_view.doubleClicked.connect(self.on_item_double_clicked)
         self.file_view.setContextMenuPolicy(Qt.CustomContextMenu)
         self.file_view.customContextMenuRequested.connect(self.show_context_menu)
-        self.file_view.setAlternatingRowColors(True)
-        self.file_view.setAnimated(True)
-        self.file_view.setIconSize(QSize(24, 24))  # Larger icons for better visibility
+        self.file_view.header().setStretchLastSection(False)
+        self.file_view.header().setSectionResizeMode(0, QHeaderView.Stretch) # Name column stretches
+        self.file_view.header().setSectionResizeMode(1, QHeaderView.ResizeToContents) # Size
+        self.file_view.header().setSectionResizeMode(2, QHeaderView.ResizeToContents) # Type
+        self.file_view.header().setSectionResizeMode(3, QHeaderView.ResizeToContents) # Permissions
+        self.file_view.header().setSectionResizeMode(4, QHeaderView.ResizeToContents) # Owner
+        self.file_view.header().setSectionResizeMode(5, QHeaderView.ResizeToContents) # Group
+        self.file_view.header().setSectionResizeMode(6, QHeaderView.ResizeToContents) # Modified
+
+        main_layout.addWidget(self.file_view)
         
-        # Make items non-editable
-        self.file_view.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        
-        # Set modern styling for the QTreeView
-        self.file_view.setStyleSheet("""
-            QTreeView {
-                border: 1px solid #ccc;
-                border-radius: 4px;
-                background-color: white;
-                selection-background-color: #5c9eff;
-                selection-color: black;  /* Changed from white to black for better readability */
-                alternate-background-color: #f5f5f5;
-            }
-            QTreeView::item {
-                padding: 4px;
-                border-bottom: 1px solid #f0f0f0;
-            }
-            QTreeView::item:hover {
-                background-color: #e8f0ff;
-            }
-            QTreeView::item:selected {
-                background-color: #5c9eff;
-                color: black;  /* Ensure text is black when selected */
-            }
-            QHeaderView::section {
-                background-color: #f0f0f0;
-                padding: 5px;
-                border: 1px solid #ddd;
-                font-weight: bold;
-            }
-        """)
-        
-        layout.addWidget(self.file_view)
-        
-        # If remote, add connection selector
+        # Populate initial connection list for remote panels
         if self.is_remote:
-            conn_layout = QHBoxLayout()
-            conn_layout.setSpacing(5)
-            
-            self.conn_label = QLabel("Connection:")
-            self.conn_label.setStyleSheet("font-weight: bold;")
-            
-            self.conn_combo = QComboBox()
-            self.conn_combo.currentTextChanged.connect(self.connection_changed)
-            self.conn_combo.setStyleSheet("""
-                QComboBox {
-                    border: 1px solid #ccc;
-                    border-radius: 4px;
-                    padding: 3px 5px;
-                    background-color: #f8f8f8;
-                }
-                QComboBox:hover {
-                    border-color: #aaa;
-                }
-                QComboBox:focus {
-                    border-color: #5c9eff;
-                }
-                QComboBox::drop-down {
-                    subcontrol-origin: padding;
-                    subcontrol-position: top right;
-                    width: 20px;
-                    border-left: 1px solid #ccc;
-                }
-            """)
-            
-            self.conn_button = QPushButton("New...")
-            self.conn_button.clicked.connect(self.new_connection)
-            self.conn_button.setStyleSheet("""
-                QPushButton {
-                    border: 1px solid #ccc;
-                    border-radius: 4px;
-                    padding: 3px 10px;
-                    background-color: #f8f8f8;
-                }
-                QPushButton:hover {
-                    background-color: #e0e0e0;
-                    border-color: #aaa;
-                }
-                QPushButton:pressed {
-                    background-color: #d0d0d0;
-                }
-            """)
-            
-            conn_layout.addWidget(self.conn_label)
-            conn_layout.addWidget(self.conn_combo)
-            conn_layout.addWidget(self.conn_button)
-            
-            layout.insertLayout(0, conn_layout)
-            
-        # Set a clean modern font for all widgets
-        font = QFont()
-        font.setFamily("Arial")
-        font.setPointSize(9)
-        self.setFont(font)
-    
-    def set_client(self, client):
-        """Set the SFTP client for remote panel"""
+            self.refresh_connections()
+
+    def set_client(self, client: SFTPClient):
+        """Sets the SFTP client for the panel."""
         self.client = client
-        self.refresh()
-    
-    def connection_changed(self, connection_name):
-        """Handle change of selected connection"""
-        if not connection_name:
-            self.client = None
-            return
-            
-        try:
-            # Get connection details from auth manager
-            parent_window = self.window()
-            if parent_window and hasattr(parent_window, 'auth_manager'):
-                auth_manager = parent_window.auth_manager
-                connection = auth_manager.get_connection(connection_name)
-                
-                if connection:
-                    # Create new SFTP client
-                    client = SFTPClient()
-                    
-                    # Build connection parameters
-                    params = {
-                        'host': connection.get('host', ''),
-                        'port': connection.get('port', 22),
-                        'username': connection.get('username', '')
-                    }
-                    
-                    if connection.get('key_path'):
-                        params['key_path'] = connection.get('key_path')
-                        if 'passphrase' in connection:
-                            params['passphrase'] = connection.get('passphrase')
-                    else:
-                        params['password'] = connection.get('password', '')
-                    
-                    # Try to connect
-                    if client.connect(**params):
-                        self.set_client(client)
-                        if hasattr(parent_window, 'status_bar'):
-                            parent_window.status_bar.showMessage(f"Connected to {connection_name}")
-                    else:
-                        QMessageBox.critical(self, "Error", "Failed to connect to server.")
+        self.disconnect_button.setEnabled(client is not None)
+        self.connect_button.setEnabled(client is None)
+        self.conn_combo.setEnabled(client is None)
+
+    def on_connection_selected(self, index):
+        """Handle selection change in the connection combo box."""
+        if self.client:
+            reply = QMessageBox.question(self, "Disconnect",
+                                         "You are currently connected. Disconnect and switch?",
+                                         QMessageBox.Yes | QMessageBox.No)
+            if reply == QMessageBox.Yes:
+                self.disconnect_from_server()
             else:
-                QMessageBox.warning(self, "Error", "Could not access connection manager.")
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Connection error: {str(e)}")
-    
-    def new_connection(self):
-        """Open dialog to create a new connection"""
-        # Get the parent window to access the auth_manager
-        parent_window = self.window()
-        auth_manager = parent_window.auth_manager if hasattr(parent_window, 'auth_manager') else None
-        
-        dialog = ConnectionDialog(self, auth_manager)
-        if dialog.exec_():
-            # Refresh connection list
-            if hasattr(parent_window, 'refresh_connections'):
-                parent_window.refresh_connections()
-    
-    def navigate_to_path(self):
-        """Navigate to the path entered in the path field"""
-        path = self.path_edit.text()
-        self.load_directory(path)
-    
-    def navigate_up(self):
-        """Navigate to the parent directory"""
-        if self.current_path:
-            parent = os.path.dirname(self.current_path)
-            self.load_directory(parent)
-    
-    def refresh(self):
-        """Refresh the current directory"""
-        if self.current_path:
-            self.load_directory(self.current_path)
-        else:
-            # Load default path
-            if self.is_remote and self.client:
-                self.load_directory('.')
-            elif not self.is_remote:
-                self.load_directory(os.path.expanduser('~'))
-    
-    def load_directory(self, path):
-        """Load directory contents into the view"""
-        self.file_model.removeRows(0, self.file_model.rowCount())
-        
-        try:
-            if self.is_remote and self.client:
-                # Remote directory listing
-                files = self.client.list_directory(path)
-                self.current_path = path
-                self.path_edit.setText(path)
-                
-                for name, size, ftype, modified in files:
-                    self.add_file_item(name, size, ftype, modified)
-            elif not self.is_remote:
-                # Local directory listing
-                if os.path.isdir(path):
-                    self.current_path = path
-                    self.path_edit.setText(path)
-                    
-                    entries = os.listdir(path)
-                    for entry in entries:
-                        full_path = os.path.join(path, entry)
-                        if os.path.isdir(full_path):
-                            ftype = 'dir'
-                            size = 0
-                        else:
-                            ftype = 'file'
-                            size = os.path.getsize(full_path)
-                        
-                        modified = time.strftime('%Y-%m-%d %H:%M:%S', 
-                                               time.localtime(os.path.getmtime(full_path)))
-                        
-                        self.add_file_item(entry, size, ftype, modified)
+                # Revert to previous selection if user cancels
+                self.conn_combo.currentIndexChanged.disconnect(self.on_connection_selected)
+                # Find the index of the current client's connection name and set it
+                if self.client and hasattr(self.client, 'connection_config') and self.client.connection_config:
+                    conn_name = self.client.connection_config.get('name')
+                    idx = self.conn_combo.findText(conn_name)
+                    if idx != -1:
+                        self.conn_combo.setCurrentIndex(idx)
                 else:
-                    raise ValueError(f"Not a directory: {path}")
-        except Exception as e:
-            QMessageBox.warning(self, "Error", f"Failed to load directory: {str(e)}")
-    
-    def add_file_item(self, name, size, ftype, modified):
-        """Add a file item to the model"""
-        name_item = QStandardItem(name)
-        name_item.setData(name, Qt.UserRole)
-        name_item.setData(ftype == 'dir', Qt.UserRole + 1)
-        
-        # Set the icon for the item
-        icon = self.icon_provider.icon(ftype, name)
-        name_item.setIcon(icon)
-        
-        if ftype == 'dir':
-            size_str = "<DIR>"
-        else:
-            if size < 1024:
-                size_str = f"{size} B"
-            elif size < 1024 * 1024:
-                size_str = f"{size/1024:.1f} KB"
-            elif size < 1024 * 1024 * 1024:
-                size_str = f"{size/(1024*1024):.1f} MB"
-            else:
-                size_str = f"{size/(1024*1024*1024):.2f} GB"
-        
-        size_item = QStandardItem(size_str)
-        type_item = QStandardItem(ftype)
-        modified_item = QStandardItem(modified)
-        
-        self.file_model.appendRow([name_item, size_item, type_item, modified_item])
-    
-    def item_double_clicked(self, index):
-        """Handle double-click on an item"""
-        if index.column() != 0:  # Only process if name column was clicked
+                    self.conn_combo.setCurrentIndex(0) # Select empty if no client
+                self.conn_combo.currentIndexChanged.connect(self.on_connection_selected)
+                return
+
+        selected_name = self.conn_combo.currentText()
+        if selected_name:
+            self.connect_to_server()
+
+    def connect_to_server(self):
+        """Connects to the selected SFTP server."""
+        if not self.is_remote:
             return
+
+        conn_name = self.conn_combo.currentText()
+        if not conn_name:
+            QMessageBox.warning(self, "Connect Error", "Please select a connection.")
+            return
+
+        config = self.auth_manager.get_connection(conn_name)
+        if not config:
+            QMessageBox.critical(self, "Connect Error", f"Connection '{conn_name}' not found.")
+            return
+        
+        try:
+            # Initialize SFTPClient without config, as its __init__ does not take it
+            new_client = SFTPClient() 
             
-        name_index = self.file_model.index(index.row(), 0)
-        is_dir = name_index.data(Qt.UserRole + 1)
-        name = name_index.data(Qt.UserRole)
+            # Create a copy of the config and remove internal keys not used by connect
+            connect_params = config.copy()
+            connect_params.pop('name', None)
+            connect_params.pop('has_password', None)
+            connect_params.pop('has_passphrase', None)
+
+            # Pass unpacked dictionary to connect method
+            connected = new_client.connect(**connect_params)
+            
+            if connected:
+                self.set_client(new_client)
+                self.current_path = "/" # Set default path after connection
+                self.load_directory(self.current_path)
+                self.path_edit.setText(self.current_path)
+                QMessageBox.information(self, "Connected", f"Successfully connected to {conn_name}.")
+            else:
+                QMessageBox.critical(self, "Connection Failed", "SFTPClient.connect() returned False.")
+                self.set_client(None) # Ensure client is None on failure
+        except Exception as e:
+            QMessageBox.critical(self, "Connection Failed", f"Failed to connect: {e}")
+            self.set_client(None) # Ensure client is None on failure
+
+    def disconnect_from_server(self):
+        """Disconnects from the current SFTP server."""
+        if self.client:
+            self.client.disconnect()
+            self.set_client(None)
+            self.file_model.removeRows(0, self.file_model.rowCount()) # Clear view
+            self.path_edit.setText("") # Clear path
+            self.conn_combo.setCurrentIndex(0) # Reset combo box
+            QMessageBox.information(self, "Disconnected", "Disconnected from server.")
+
+    def load_directory(self, path):
+        """Loads and displays the contents of a directory."""
+        self.file_model.removeRows(0, self.file_model.rowCount()) # Clear existing items
+        self.current_path = path
+
+        try:
+            if self.is_remote:
+                if not self.client:
+                    self.file_model.setHorizontalHeaderLabels(["Name", "Size", "Type", "Permissions", "Owner", "Group", "Modified"])
+                    item = QStandardItem("Not Connected")
+                    item.setFlags(item.flags() & ~Qt.ItemIsSelectable) # Make it non-selectable
+                    self.file_model.appendRow(item)
+                    self.path_edit.setText("")
+                    return
+                
+                # SFTPClient.list_directory now returns paramiko.SFTPAttributes objects directly
+                files = self.client.list_directory(path)
+                
+                # --- DEBUG PRINTS ---
+                print(f"--- Debugging remote directory listing for path: {path} ---")
+                if files:
+                    print(f"First file object type: {type(files[0])}")
+                    print(f"Attributes of first file object: {dir(files[0])}")
+                    # Attempt to access owner_name and group_name with a try-except
+                    try:
+                        print(f"First file owner_name: {getattr(files[0], 'owner_name', 'N/A')}")
+                    except AttributeError:
+                        print("First file object has no 'owner_name' attribute (caught by direct access attempt).")
+                    try:
+                        print(f"First file group_name: {getattr(files[0], 'group_name', 'N/A')}")
+                    except AttributeError:
+                        print("First file object has no 'group_name' attribute (caught by direct access attempt).")
+                else:
+                    print("No files found or directory is empty.")
+                print("-------------------------------------------------------")
+                # --- END DEBUG PRINTS ---
+
+            else:
+                files = self.get_local_directory_contents(path)
+
+            for f in files:
+                if self.is_remote:
+                    item_name = QStandardItem(f.filename)
+                    # Store full path for operations
+                    item_name.setData(os.path.join(path, f.filename).replace('\\', '/'), Qt.UserRole)
+                    item_name.setData(stat.S_ISDIR(f.st_mode), Qt.UserRole + 1) # is_directory
+                    if stat.S_ISDIR(f.st_mode):
+                        item_name.setIcon(QIcon(self.style().standardIcon(QStyle.SP_DirIcon)))
+                    else:
+                        item_name.setIcon(QIcon(self.style().standardIcon(QStyle.SP_FileIcon)))
+                    
+                    self.file_model.appendRow([
+                        item_name,
+                        QStandardItem(self.format_size(f.st_size)),
+                        QStandardItem("Directory" if stat.S_ISDIR(f.st_mode) else "File"),
+                        QStandardItem(self.format_permissions(f.st_mode)),
+                        # Use getattr to safely access owner_name and group_name
+                        QStandardItem(getattr(f, 'owner_name', None) or str(f.st_uid)), 
+                        QStandardItem(getattr(f, 'group_name', None) or str(f.st_gid)), 
+                        QStandardItem(self.format_datetime(f.st_mtime))
+                    ])
+                else: # Local file
+                    item_name = QStandardItem(f['name'])
+                    item_name.setData(f['path'], Qt.UserRole) # Store full path
+                    item_name.setData(f['is_dir'], Qt.UserRole + 1) # is_directory
+                    if f['is_dir']:
+                        item_name.setIcon(QIcon(self.style().standardIcon(QStyle.SP_DirIcon)))
+                    else:
+                        item_name.setIcon(QIcon(self.style().standardIcon(QStyle.SP_FileIcon)))
+
+                    self.file_model.appendRow([
+                        item_name,
+                        QStandardItem(self.format_size(f['size'])),
+                        QStandardItem("Directory" if f['is_dir'] else "File"),
+                        QStandardItem(f['permissions']),
+                        QStandardItem(f['owner']),
+                        QStandardItem(f['group']),
+                        QStandardItem(f['modified_time'])
+                    ])
+            self.path_edit.setText(path)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Could not load directory '{path}': {e}")
+            self.file_model.removeRows(0, self.file_model.rowCount()) # Clear existing items
+            item = QStandardItem(f"Error loading directory: {e}")
+            item.setFlags(item.flags() & ~Qt.ItemIsSelectable)
+            self.file_model.appendRow(item)
+            self.path_edit.setText(self.current_path) # Revert to previous path if error
+
+    def get_local_directory_contents(self, path):
+        """Helper to get contents of a local directory."""
+        contents = []
+        try:
+            # Ensure path exists before listing
+            if not os.path.exists(path):
+                return []
+            
+            for entry in os.listdir(path):
+                full_path = os.path.join(path, entry)
+                # Use os.path.lexists to handle broken symlinks gracefully if needed,
+                # but os.path.exists is fine for most cases.
+                if os.path.exists(full_path):
+                    stats = os.stat(full_path)
+                    is_dir = os.path.isdir(full_path)
+                    contents.append({
+                        'name': entry,
+                        'path': full_path,
+                        'size': stats.st_size,
+                        'is_dir': is_dir,
+                        'permissions': stat.filemode(stats.st_mode),
+                        'owner': str(stats.st_uid), # On Windows, this might be a number
+                        'group': str(stats.st_gid), # On Windows, this might be a number
+                        'modified_time': datetime.datetime.fromtimestamp(stats.st_mtime).strftime('%Y-%m-%d %H:%M:%S')
+                    })
+        except Exception as e:
+            QMessageBox.critical(self, "Local Directory Error", f"Error accessing local directory: {e}")
+        return contents
+
+    def go_to_path(self):
+        """Changes the current directory to the path in the QLineEdit."""
+        new_path = self.path_edit.text()
+        if not new_path:
+            return
+        if self.is_remote and not self.client:
+            QMessageBox.warning(self, "Not Connected", "Please connect to a server first.")
+            return
+        self.load_directory(new_path)
+
+    def go_up_directory(self):
+        """Moves up one level in the directory tree."""
+        if not self.current_path:
+            return
+
+        parent_path = str(Path(self.current_path).parent)
+        if self.is_remote and parent_path == ".": # Handle root for remote
+            parent_path = "/"
+        elif not self.is_remote and parent_path == self.current_path and os.path.ismount(self.current_path):
+             # On Windows, going up from C:\ might stay C:\. On Linux, going up from / stays /.
+             # We should stop if we hit the actual root of the file system
+             pass # Already at root, cannot go up further
+        
+        if parent_path != self.current_path: # Prevent endless loop at root
+            self.load_directory(parent_path)
+
+    def refresh(self):
+        """Refreshes the current directory view."""
+        self.load_directory(self.current_path)
+
+    def on_item_double_clicked(self, index: QModelIndex):
+        """Handle double-clicking on an item in the file view."""
+        path = index.data(Qt.UserRole)
+        is_dir = index.data(Qt.UserRole + 1)
         
         if is_dir:
-            # Navigate to this directory
-            new_path = os.path.join(self.current_path, name)
-            self.load_directory(new_path)
+            self.load_directory(path)
         else:
-            # Emit signal that file was selected
-            full_path = os.path.join(self.current_path, name)
-            self.itemSelected.emit(full_path, False)
-    
+            # Emit signal for file selection, main window will handle transfer
+            self.itemSelected.emit(path, False)
+
     def show_context_menu(self, position):
-        """Show context menu for file/directory operations"""
+        """Show context menu for selected items."""
+        # Get the index of the item at the clicked position
+        index = self.file_view.indexAt(position)
+        
+        # If no item is clicked, or if the clicked item is not in the first column, return
+        if not index.isValid() or index.column() != 0:
+            return
+
         menu = QMenu()
-        
-        # Add actions based on selection
-        indexes = self.file_view.selectedIndexes()
-        if indexes:
-            row = indexes[0].row()
-            name_index = self.file_model.index(row, 0)
-            name = name_index.data(Qt.UserRole)
-            is_dir = name_index.data(Qt.UserRole + 1)
-            
-            if is_dir:
-                menu.addAction("Open", lambda: self.load_directory(
-                    os.path.join(self.current_path, name)))
-            
-            # Transfer actions will be implemented by the main window
-            # These actions just signal the main window
-            if self.is_remote:
-                menu.addAction("Download", lambda: self.itemSelected.emit(
-                    os.path.join(self.current_path, name), is_dir))
+        open_action = menu.addAction(self.style().standardIcon(QStyle.SP_DialogOpenButton), "Open")
+        rename_action = menu.addAction(self.style().standardIcon(QStyle.SP_DialogResetButton), "Rename") 
+        delete_action = menu.addAction(self.style().standardIcon(QStyle.SP_TrashIcon), "Delete")
+
+        action = menu.exec_(self.file_view.viewport().mapToGlobal(position))
+
+        # Now, `index` specifically refers to the item that was right-clicked
+        full_path = index.data(Qt.UserRole)
+        is_dir = index.data(Qt.UserRole + 1)
+
+        if action == open_action:
+            if not is_dir:
+                self.open_file(full_path)
             else:
-                menu.addAction("Upload", lambda: self.itemSelected.emit(
-                    os.path.join(self.current_path, name), is_dir))
+                self.load_directory(full_path)
+        elif action == rename_action: 
+            old_full_path = full_path
+            old_name = os.path.basename(old_full_path)
             
-            # Add delete option for both remote and local files/directories
-            menu.addSeparator()
-            menu.addAction("Delete", lambda: self.delete_item(name, is_dir))
-        
-        menu.exec_(self.file_view.viewport().mapToGlobal(position))
-    
-    def delete_item(self, name, is_dir):
-        """Delete the selected file or directory"""
-        full_path = os.path.join(self.current_path, name)
-        item_type = "directory" if is_dir else "file"
-        
-        # Ask for confirmation
-        reply = QMessageBox.question(
-            self, 
-            f"Delete {item_type.capitalize()}", 
-            f"Are you sure you want to delete this {item_type}?\n\n{full_path}",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
-        )
-        
-        if reply != QMessageBox.Yes:
+            new_name, ok = QInputDialog.getText(self, "Rename Item", "Enter new name:", QLineEdit.Normal, old_name)
+            if ok and new_name and new_name != old_name:
+                # Ensure the new path is correctly formed, especially for remote paths
+                new_full_path = os.path.join(os.path.dirname(old_full_path), new_name).replace('\\', '/')
+                self.rename_item(old_full_path, new_full_path)
+        elif action == delete_action:
+            if QMessageBox.question(self, "Confirm Delete", 
+                                  f"Are you sure you want to delete '{os.path.basename(full_path)}'? This cannot be undone.",
+                                  QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
+                self.delete_item(full_path, is_dir)
+
+    def open_file(self, file_path):
+        """Opens a file using the default system application."""
+        if self.is_remote:
+            QMessageBox.information(self, "Open File", "Remote files cannot be opened directly from here. Please download them first.")
+        else:
+            if not os.path.exists(file_path):
+                QMessageBox.warning(self, "File Not Found", f"The file '{file_path}' does not exist.")
+                return
+            
+            url = QUrl.fromLocalFile(file_path)
+            if not QDesktopServices.openUrl(url):
+                QMessageBox.warning(self, "Error", f"Could not open file: {file_path}")
+
+    def delete_item(self, path, is_dir):
+        """Deletes a file or directory."""
+        try:
+            success = False
+            if self.is_remote:
+                if self.client:
+                    if is_dir:
+                        success = self.client.rmdir(path) # This now handles recursive deletion
+                    else:
+                        success = self.client.remove(path)
+                else:
+                    QMessageBox.warning(self, "Delete Error", "Not connected to remote server.")
+                    return
+            else: # Local file/directory
+                if is_dir:
+                    # For local directories, use shutil.rmtree for recursive deletion
+                    # or os.rmdir for empty directories.
+                    # shutil.rmtree is safer for user experience but permanent.
+                    if os.path.exists(path):
+                        shutil.rmtree(path) 
+                        success = True
+                    else:
+                        QMessageBox.warning(self, "Delete Error", f"Local directory not found: {path}")
+                        return
+                else:
+                    if os.path.exists(path):
+                        os.remove(path)
+                        success = True
+                    else:
+                        QMessageBox.warning(self, "Delete Error", f"Local file not found: {path}")
+                        return
+
+            if success:
+                QMessageBox.information(self, "Delete Success", f"Successfully deleted '{os.path.basename(path)}'.")
+                self.refresh() # Refresh the view after deletion
+            else:
+                # If success is False, an error message should have been logged/displayed by SFTPClient or local ops
+                QMessageBox.critical(self, "Delete Failed", f"Failed to delete '{os.path.basename(path)}'. Check logs for details.")
+        except Exception as e:
+            QMessageBox.critical(self, "Delete Error", f"Failed to delete '{os.path.basename(path)}': {e}")
+
+    def rename_item(self, old_path, new_path):
+        """Renames a file or directory."""
+        try:
+            success = False
+            if self.is_remote:
+                if self.client:
+                    success = self.client.rename(old_path, new_path)
+                else:
+                    QMessageBox.warning(self, "Rename Error", "Not connected to remote server.")
+                    return
+            else: # Local file/directory
+                if os.path.exists(old_path):
+                    os.rename(old_path, new_path)
+                    success = True
+                else:
+                    QMessageBox.warning(self, "Rename Error", f"Local item not found: {old_path}")
+                    return
+
+            if success:
+                QMessageBox.information(self, "Rename Success", f"Successfully renamed '{os.path.basename(old_path)}' to '{os.path.basename(new_path)}'.")
+                self.refresh() # Refresh the view after rename
+            else:
+                QMessageBox.critical(self, "Rename Failed", f"Failed to rename '{os.path.basename(old_path)}'. Check logs for details.")
+        except Exception as e:
+            QMessageBox.critical(self, "Rename Error", f"Failed to rename '{os.path.basename(old_path)}': {e}")
+
+    # Helper methods for formatting
+    def format_size(self, size):
+        if size < 1024:
+            return f"{size} B"
+        elif size < 1024 * 1024:
+            return f"{size / 1024:.2f} KB"
+        elif size < 1024 * 1024 * 1024:
+            return f"{size / (1024 * 1024):.2f} MB"
+        else:
+            return f"{size / (1024 * 1024 * 1024):.2f} GB"
+
+    def format_permissions(self, mode):
+        # paramiko.SFTPAttributes.longname often contains this, but we can reconstruct from st_mode
+        return stat.filemode(mode)
+
+    def format_datetime(self, timestamp):
+        # Ensure timestamp is a float/int before converting
+        if isinstance(timestamp, (int, float)):
+            return datetime.datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')
+        return "N/A" # Or handle as error/unknown
+
+    def refresh_connections(self):
+        """Refreshes the list of connections in the combo box."""
+        if not self.is_remote:
             return
         
-        try:
-            if self.is_remote and self.client:
-                # Remote file/directory deletion
-                if is_dir:
-                    self.delete_remote_directory(full_path)
-                else:
-                    self.client.sftp.remove(full_path)
-                    self.refresh()
-                    if hasattr(self.window(), 'status_bar'):
-                        self.window().status_bar.showMessage(f"Deleted: {full_path}", 5000)
-            else:
-                # Local file/directory deletion
-                if is_dir:
-                    import shutil
-                    shutil.rmtree(full_path)
-                else:
-                    os.remove(full_path)
-                
-                self.refresh()
-                if hasattr(self.window(), 'status_bar'):
-                    self.window().status_bar.showMessage(f"Deleted: {full_path}", 5000)
-                
-        except Exception as e:
-            QMessageBox.critical(
-                self, 
-                "Delete Failed", 
-                f"Failed to delete {item_type}: {full_path}\n\nError: {str(e)}"
-            )
-    
-    def delete_remote_directory(self, dir_path):
-        """Recursively delete a remote directory"""
-        try:
-            # List all directory contents
-            for item in self.client.list_directory(dir_path):
-                name, _, item_type, _ = item
-                item_path = f"{dir_path}/{name}"
-                
-                if item_type == 'dir':
-                    # Recursively delete subdirectory
-                    self.delete_remote_directory(item_path)
-                else:
-                    # Delete file
-                    self.client.sftp.remove(item_path)
-            
-            # Delete the now empty directory
-            self.client.sftp.rmdir(dir_path)
-            self.refresh()
-            
-            if hasattr(self.window(), 'status_bar'):
-                self.window().status_bar.showMessage(f"Deleted directory: {dir_path}", 5000)
-                
-        except Exception as e:
-            QMessageBox.critical(
-                self, 
-                "Delete Failed", 
-                f"Failed to delete directory: {dir_path}\n\nError: {str(e)}"
-            )
-    
-    def prevent_edit(self, item):
-        """Prevent items from being edited by immediately reverting any changes"""
-        # This is an additional safeguard in case any items somehow become editable
-        # Even though we've set EditTriggers to NoEditTriggers, this adds an extra layer of protection
-        # The method is called by the itemChanged signal of the model
-        
-        # Get the original data from the user role and reset it
-        if item.data(Qt.UserRole) is not None:
-            original_text = item.data(Qt.UserRole)
-            item.setText(original_text)
-            
-        # Also make sure the item remains non-editable
-        item.setEditable(False)
-
+        connections = self.auth_manager.list_connections()
+        self.conn_combo.clear()
+        self.conn_combo.addItem("") # Add empty item for no selection
+        for conn in connections:
+            name = conn.get('name')
+            if name:
+                self.conn_combo.addItem(name)
