@@ -1,6 +1,7 @@
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QMessageBox, QInputDialog, QLineEdit, QStyle, QFrame
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 from PyQt5.QtGui import QIcon
+import posixpath
 
 import os
 from code.gui.file_panel import FilePanel
@@ -98,9 +99,12 @@ class ServerToServerPanel(QWidget):
             QMessageBox.warning(self, "Connection Error", "Please connect to both source and destination servers.")
             return
 
-        source_full_path = os.path.join(self.source_panel.current_path, os.path.basename(path))
-        dest_base_path = self.destination_panel.current_path
-        dest_full_path = os.path.join(dest_base_path, os.path.basename(path))
+        source_full_path = posixpath.normpath(path.replace("\\", "/"))
+        # print(f"Source full path: {source_full_path}")
+        dest_base_path = posixpath.normpath(self.destination_panel.current_path.replace("\\", "/"))
+        # print(f"Destination base path: {dest_base_path}")
+        dest_full_path = posixpath.join(dest_base_path, posixpath.basename(path.replace("\\", "/")))
+        # print(f"Destination full path: {dest_full_path}")
 
         if is_dir:
             reply = QMessageBox.question(

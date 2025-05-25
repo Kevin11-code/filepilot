@@ -1,23 +1,7 @@
 [
   {
-    "name": "ananya",
-    "host": "10.10.2.139",
-    "port": 22,
-    "username": "arcon",
-    "key_path": null,
-    "has_password": true
-  },
-  {
     "name": "pratham",
-    "host": "10.10.2.27",
-    "port": 22,
-    "username": "arcon",
-    "key_path": null,
-    "has_password": true
-  },
-  {
-    "name": "shadab",
-    "host": "10.10.2.139",
+    "host": "10.10.1.186",
     "port": 22,
     "username": "arcon",
     "key_path": null,
@@ -25,9 +9,17 @@
   },
   {
     "name": "arcon",
-    "host": "10.10.2.139",
+    "host": "10.10.2.106",
     "port": 22,
     "username": "arcon",
+    "key_path": null,
+    "has_password": true
+  },
+  {
+    "name": "Mihit",
+    "host": "103.3.40.90",
+    "port": 22,
+    "username": "drut.sftp",
     "key_path": null,
     "has_password": true
   }

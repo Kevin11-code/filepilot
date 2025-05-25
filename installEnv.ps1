@@ -13,7 +13,7 @@ $pythonVersion = $null
 
 try {
     # First check for python3.12 specifically
-    $pythonVersion = (python3.12 --version 2>&1)
+    $lpythonVersion = (python3.12 --version 2>&1)
     $PYTHON = "python3.12"
 } catch {
     try {
