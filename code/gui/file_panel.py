@@ -351,9 +351,9 @@ class FilePanel(QWidget):
         
         if is_dir:
             self.load_directory(path)
-        else:
-            # Emit signal for file selection, main window will handle transfer
-            self.itemSelected.emit(path, False)
+        # else:
+        #     # Emit signal for file selection, main window will handle transfer
+        #     self.itemSelected.emit(path, False)
 
     def show_context_menu(self, position):
         """Show context menu for selected items."""
@@ -366,6 +366,7 @@ class FilePanel(QWidget):
 
         menu = QMenu()
         open_action = menu.addAction(self.style().standardIcon(QStyle.SP_DialogOpenButton), "Open")
+        upload_action = menu.addAction(self.style().standardIcon(QStyle.SP_ArrowUp), "Upload")
         rename_action = menu.addAction(self.style().standardIcon(QStyle.SP_DialogResetButton), "Rename") 
         delete_action = menu.addAction(self.style().standardIcon(QStyle.SP_TrashIcon), "Delete")
 
@@ -394,6 +395,13 @@ class FilePanel(QWidget):
                                   f"Are you sure you want to delete '{os.path.basename(full_path)}'? This cannot be undone.",
                                   QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
                 self.delete_item(full_path, is_dir)
+        elif action == upload_action:
+            if not is_dir:
+                if QMessageBox.question(self, "Confirm Upload",
+                                        f"Do you want to upload '{os.path.basename(full_path)}'?",
+                                        QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
+                    self.itemSelected.emit(full_path, False)
+
 
     def open_file(self, file_path):
         """Opens a file using the default system application."""
