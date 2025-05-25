@@ -31,7 +31,8 @@ class TransferItem:
                 priority: int = 1,
                 source_config: Dict = None,
                 dest_config: Dict = None,
-                chunks: int = 10):
+                chunks: int = 10,
+                progress_callback: Callable = None): # Added progress_callback
         """
         Initialize a transfer item.
         
@@ -43,6 +44,7 @@ class TransferItem:
             source_config: Source server configuration (for server-to-server)
             dest_config: Destination server configuration (for server-to-server)
             chunks: Number of chunks to use for transfer
+            progress_callback: Callback for progress updates (transfer_id, transferred_bytes, total_bytes)
         """
         self.id = int(time.time() * 1000)  # Unique ID based on timestamp
         self.transfer_type = transfer_type
@@ -60,6 +62,7 @@ class TransferItem:
         self.end_time = None
         self.error_message = ""
         self.transfer_rate = 0.0
+        self._progress_callback = progress_callback # Stored here
         
     def __lt__(self, other):
         """Compare transfers based on priority for the priority queue."""
@@ -149,7 +152,8 @@ class TransferManager:
                     remote_path: str, 
                     server_config: Dict,
                     priority: int = 1,
-                    chunks: int = 10) -> int:
+                    chunks: int = 10,
+                    progress_callback: Callable = None) -> int: # Added progress_callback
         """
         Queue a file upload.
         
@@ -159,6 +163,7 @@ class TransferManager:
             server_config: Server connection configuration
             priority: Transfer priority (lower = higher priority)
             chunks: Number of chunks for transfer
+            progress_callback: Callback function for progress updates
             
         Returns:
             int: Transfer ID
@@ -169,7 +174,8 @@ class TransferManager:
             remote_path,
             priority,
             dest_config=server_config,
-            chunks=chunks
+            chunks=chunks,
+            progress_callback=progress_callback # Pass callback to TransferItem
         )
         
         if os.path.exists(local_path):
@@ -187,7 +193,8 @@ class TransferManager:
                      local_path: str,
                      server_config: Dict,
                      priority: int = 1,
-                     chunks: int = 10) -> int:
+                     chunks: int = 10,
+                     progress_callback: Callable = None) -> int: # Added progress_callback
         """
         Queue a file download.
         
@@ -197,6 +204,7 @@ class TransferManager:
             server_config: Server connection configuration
             priority: Transfer priority (lower = higher priority)
             chunks: Number of chunks for transfer
+            progress_callback: Callback function for progress updates
             
         Returns:
             int: Transfer ID
@@ -207,7 +215,8 @@ class TransferManager:
             local_path,
             priority,
             source_config=server_config,
-            chunks=chunks
+            chunks=chunks,
+            progress_callback=progress_callback # Pass callback to TransferItem
         )
         
         # Create directory for the download if it doesn't exist
@@ -228,7 +237,8 @@ class TransferManager:
                              source_config: Dict,
                              dest_config: Dict,
                              priority: int = 1,
-                             chunks: int = 10) -> int:
+                             chunks: int = 10,
+                             progress_callback: Callable = None) -> int: # Added progress_callback here
         """
         Queue a server-to-server transfer.
         
@@ -239,6 +249,7 @@ class TransferManager:
             dest_config: Destination server configuration
             priority: Transfer priority (lower = higher priority)
             chunks: Number of chunks for transfer
+            progress_callback: Callback function for progress updates (transfer_id, transferred_bytes, total_bytes)
             
         Returns:
             int: Transfer ID
@@ -250,7 +261,8 @@ class TransferManager:
             priority,
             source_config=source_config,
             dest_config=dest_config,
-            chunks=chunks
+            chunks=chunks,
+            progress_callback=progress_callback # Pass callback to TransferItem
         )
         
         return self.add_transfer(transfer)
@@ -500,8 +512,10 @@ class TransferManager:
                         transfer.error_message = "Failed to connect to source server"
                         return
             
-            # Progress callback
-            def update_progress(bytes_transferred, total_bytes, percent):
+            # Progress callback wrapper for SFTPClient
+            # This wrapper translates SFTPClient's progress args to TransferManager's expected args
+            # and then calls the TransferItem's stored _progress_callback
+            def sftp_progress_wrapper(bytes_transferred, total_bytes, percent):
                 transfer.bytes_transferred = bytes_transferred
                 transfer.total_bytes = total_bytes
                 transfer.progress = percent
@@ -509,12 +523,13 @@ class TransferManager:
                 if elapsed > 0:
                     transfer.transfer_rate = bytes_transferred / elapsed / (1024 * 1024)  # MB/s
                 
-                # Call the progress callback if it exists
-                if hasattr(transfer, '_progress_callback') and transfer._progress_callback:
+                # Call the TransferItem's stored progress callback if it exists
+                if transfer._progress_callback:
                     try:
+                        # The stored callback expects (transfer_id, transferred_bytes, total_bytes)
                         transfer._progress_callback(transfer.id, bytes_transferred, total_bytes)
                     except Exception as e:
-                        self.logger.error(f"Error in progress callback: {str(e)}")
+                        self.logger.error(f"Error in transfer item progress callback: {str(e)}")
                 
                 # Check if transfer was canceled or paused
                 if transfer.status in [TransferStatus.CANCELED, TransferStatus.PAUSED]:
@@ -527,7 +542,7 @@ class TransferManager:
                     transfer.source_path, 
                     transfer.dest_path,
                     transfer.chunks,
-                    update_progress
+                    sftp_progress_wrapper # Pass our wrapper
                 )
                 
                 # Only disconnect if we created a new connection
@@ -546,7 +561,7 @@ class TransferManager:
                     transfer.source_path,
                     transfer.dest_path,
                     transfer.chunks,
-                    update_progress
+                    sftp_progress_wrapper # Pass our wrapper
                 )
                 
                 # Only disconnect if we created a new connection
@@ -567,7 +582,7 @@ class TransferManager:
                     transfer.source_path,
                     transfer.dest_path,
                     chunks=transfer.chunks,
-                    progress_callback=update_progress
+                    progress_callback=sftp_progress_wrapper # Pass our wrapper
                 )
                 
                 if result:
@@ -597,6 +612,9 @@ class TransferManager:
                     
             self.logger.info(f"Transfer completed with status {transfer.status.name}: {transfer.source_path} -> {transfer.dest_path}")
     
+    # Removed the _register_progress_callback and _hook_progress_callback methods
+    # as the callback is now passed directly to TransferItem on creation.
+
     def upload_file(self, source_path: str, dest_path: str, progress_callback: Callable = None) -> int:
         """
         Upload a file from local system to remote server.
@@ -616,12 +634,8 @@ class TransferManager:
         # Create a basic server config (we rely on existing connection)
         server_config = {'host': 'active_connection'}
         
-        # Queue the upload with default parameters
-        transfer_id = self.queue_upload(source_path, dest_path, server_config)
-        
-        # Store the callback in a dict for use in _process_transfer
-        if progress_callback:
-            self._register_progress_callback(transfer_id, progress_callback)
+        # Queue the upload with default parameters, passing the progress_callback
+        transfer_id = self.queue_upload(source_path, dest_path, server_config, progress_callback=progress_callback)
         
         return transfer_id
     
@@ -644,54 +658,8 @@ class TransferManager:
         # Create a basic server config (we rely on existing connection)
         server_config = {'host': 'active_connection'}
         
-        # Queue the download with default parameters
-        transfer_id = self.queue_download(source_path, dest_path, server_config)
-        
-        # Store the callback in a dict for use in _process_transfer
-        if progress_callback:
-            self._register_progress_callback(transfer_id, progress_callback)
+        # Queue the download with default parameters, passing the progress_callback
+        transfer_id = self.queue_download(source_path, dest_path, server_config, progress_callback=progress_callback)
         
         return transfer_id
-    
-    def _register_progress_callback(self, transfer_id: int, callback: Callable) -> None:
-        """
-        Register a progress callback for a specific transfer.
-        
-        Args:
-            transfer_id: The ID of the transfer
-            callback: The callback function
-        """
-        # Need to find the transfer and hook up the callback
-        with self.lock:
-            if transfer_id in self.active_transfers:
-                transfer = self.active_transfers[transfer_id]
-                self._hook_progress_callback(transfer, callback)
-                return
-                
-        # Check queue
-        queue_list = list(self.transfer_queue.queue)
-        for _, item in queue_list:
-            if item.id == transfer_id:
-                self._hook_progress_callback(item, callback)
-                return
-    
-    def _hook_progress_callback(self, transfer: TransferItem, callback: Callable) -> None:
-        """
-        Hook up a progress callback to a transfer.
-        
-        Args:
-            transfer: The transfer item
-            callback: The callback function
-        """
-        # Define an attribute to store the original function if needed in future
-        if not hasattr(transfer, '_original_update_progress'):
-            transfer._original_update_progress = None
-        
-        # Define a wrapper to call both original and our callback
-        def progress_wrapper(bytes_transferred, total_bytes, percent):
-            if transfer._original_update_progress:
-                transfer._original_update_progress(bytes_transferred, total_bytes, percent)
-            callback(transfer.id, bytes_transferred, total_bytes)
-            
-        # Store the callback directly on the transfer object
-        transfer._progress_callback = callback
+

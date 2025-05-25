@@ -1,26 +1,26 @@
 import os
 import sys
-import time  # Add this import for file panel
+import time
 
 from PyQt5.QtWidgets import (
     QMainWindow, QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QLabel, QLineEdit, QTabWidget, QFileDialog, QMessageBox, QTreeView, 
     QHeaderView, QAbstractItemView, QProgressBar, QMenu, QAction, QComboBox,
     QDialog, QDialogButtonBox, QFormLayout, QSpinBox, QCheckBox, QTableWidget,
-    QTableWidgetItem, QSplitter, QFrame, QInputDialog, QStyle
+    QTableWidgetItem, QSplitter, QFrame, QInputDialog, QStyle, QStackedWidget
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QModelIndex, QSize, QSettings, QObject
 from PyQt5.QtGui import QIcon, QStandardItemModel, QStandardItem, QFont
 
 from code.core.auth_manager import AuthManager
-from code.core.transfer_manager import TransferManager
+from code.core.transfer_manager import TransferManager, TransferType
 from code.core.sftp_client import SFTPClient
 from code.utils.logger import LoggerSetup
 from code.gui.conn_dialog import ConnectionDialog
 from code.gui.file_panel import FilePanel
 from code.gui.transfer_panel import TransferPanel
 from code.gui.conn_manager import ConnectionManagerDialog
-
+from code.gui.server_to_server_panel import ServerToServerPanel # Import the new panel
 
 
 class TransferSignalBridge(QObject):
@@ -29,17 +29,19 @@ class TransferSignalBridge(QObject):
     Solves the QObject timer thread issues by ensuring all Qt operations happen on the main thread.
     """
     # Define a signal that will be emitted when transfer progress updates
-    progressUpdated = pyqtSignal(int, int, int)  # transfer_id, bytes_transferred, total_bytes
+    # Added 'transfer_type' and 'destination_panel_ref' for S2S transfers
+    progressUpdated = pyqtSignal(int, int, int, TransferType, object) #
     
     def __init__(self):
         super().__init__()
         
-    def update_progress(self, transfer_id, bytes_transferred, total_bytes):
+    def update_progress(self, transfer_id: int, bytes_transferred: int, total_bytes: int,
+                        transfer_type: TransferType = TransferType.DOWNLOAD, destination_panel_ref=None): #
         """
         This method is called from worker threads, but safely emits a signal
-        that will be processed on the main Qt thread
+        that will be processed on the main Qt thread.
         """
-        self.progressUpdated.emit(transfer_id, bytes_transferred, total_bytes)
+        self.progressUpdated.emit(transfer_id, bytes_transferred, total_bytes, transfer_type, destination_panel_ref) #
 
 
 class MainWindow(QMainWindow):
@@ -52,12 +54,26 @@ class MainWindow(QMainWindow):
         self.sftp_client = None
         
         # Dictionary to track downloads and their destination paths
-        self.active_downloads = {}
+        self.active_downloads = {} # For local downloads
+        # New: Dictionary to track uploads for refresh purposes (not strictly needed with panel ref, but good for consistency)
+        self.active_uploads = {} 
         
         # Create and initialize the signal bridge for thread-safe UI updates
         self.signal_bridge = TransferSignalBridge()
-        self.signal_bridge.progressUpdated.connect(self.on_transfer_progress)
+        self.signal_bridge.progressUpdated.connect(self.on_transfer_progress) #
         
+        # Initialize panels (will be added to stacked widget)
+        self.local_panel = FilePanel(is_remote=False)
+        self.remote_panel = FilePanel(is_remote=True)
+        self.server_to_server_panel = ServerToServerPanel(
+            parent=self,
+            auth_manager=self.auth_manager,
+            transfer_manager=self.transfer_manager,
+            signal_bridge=self.signal_bridge
+        )
+
+        self.current_mode = "local_to_server" # Initial mode
+
         self.setup_ui()
         self.setup_logger()
         
@@ -138,54 +154,58 @@ class MainWindow(QMainWindow):
         splitter = QSplitter(Qt.Vertical)
         splitter.setHandleWidth(6)  # Wider handle for easier resizing
         
-        # File panels container
-        file_panels = QWidget()
-        file_layout = QHBoxLayout(file_panels)
-        file_layout.setContentsMargins(0, 0, 0, 0)
-        file_layout.setSpacing(6)
+        # --- Local to Server Widget (contains local and one remote panel) ---
+        self.local_to_server_widget = QWidget()
+        local_server_layout = QHBoxLayout(self.local_to_server_widget)
+        local_server_layout.setContentsMargins(0, 0, 0, 0)
+        local_server_layout.setSpacing(6)
         
-        # Local file panel
-        self.local_panel = FilePanel(is_remote=False)
-        file_layout.addWidget(self.local_panel)
+        local_server_layout.addWidget(self.local_panel) #
         
         # Add a vertical separator
         separator = QFrame()
         separator.setFrameShape(QFrame.VLine)
         separator.setFrameShadow(QFrame.Sunken)
-        file_layout.addWidget(separator)
+        local_server_layout.addWidget(separator)
         
-        # Remote file panel
-        self.remote_panel = FilePanel(is_remote=True)
-        file_layout.addWidget(self.remote_panel)
+        local_server_layout.addWidget(self.remote_panel) #
         
-        # Connect item selection signals
-        self.local_panel.itemSelected.connect(self.local_item_selected)
-        self.remote_panel.itemSelected.connect(self.remote_item_selected)
+        # Connect item selection signals for local-to-server mode
+        self.local_panel.itemSelected.connect(self.local_item_selected) #
+        self.remote_panel.itemSelected.connect(self.remote_item_selected) #
+
+        # --- Stacked Widget for different transfer modes ---
+        self.transfer_mode_stacked_widget = QStackedWidget()
+        self.transfer_mode_stacked_widget.addWidget(self.local_to_server_widget) # Index 0: Local to Server
+        self.transfer_mode_stacked_widget.addWidget(self.server_to_server_panel) # Index 1: Server to Server
+
+        # Set initial view
+        self.transfer_mode_stacked_widget.setCurrentIndex(0) #
         
-        # Add file panels to splitter
-        splitter.addWidget(file_panels)
+        # Add the stacked widget to the main splitter
+        splitter.addWidget(self.transfer_mode_stacked_widget) #
         
         # Transfer panel
         self.transfer_panel = TransferPanel(transfer_manager=self.transfer_manager)
         splitter.addWidget(self.transfer_panel)
         
         # Set initial sizes
-        splitter.setSizes([400, 200])
+        splitter.setSizes([400, 200]) #
         
         main_layout.addWidget(splitter)
         
         # Status bar with modern styling
         self.status_bar = self.statusBar()
-        self.status_bar.showMessage("Ready")
+        self.status_bar.showMessage("Ready") #
         
         # Set central widget
-        self.setCentralWidget(central_widget)
+        self.setCentralWidget(central_widget) #
         
         # Create menu bar
         self.create_menus()
         
         # Initialize the local panel with home directory
-        self.local_panel.load_directory(os.path.expanduser('~'))
+        self.local_panel.load_directory(os.path.expanduser('~')) #
         
         # Set application font
         font = QFont()
@@ -196,109 +216,146 @@ class MainWindow(QMainWindow):
     def create_menus(self):
         """Create the application menu bar with icons"""
         # File menu
-        file_menu = self.menuBar().addMenu("File")
+        file_menu = self.menuBar().addMenu("File") #
         
         new_conn_action = QAction(self.style().standardIcon(QStyle.SP_ComputerIcon),
                                  "New Connection...", self)
         new_conn_action.triggered.connect(self.new_connection)
-        file_menu.addAction(new_conn_action)
+        file_menu.addAction(new_conn_action) #
         
         manage_conn_action = QAction(self.style().standardIcon(QStyle.SP_FileDialogListView),
                                     "Manage Connections...", self)
         manage_conn_action.triggered.connect(self.manage_connections)
-        file_menu.addAction(manage_conn_action)
+        file_menu.addAction(manage_conn_action) #
         
-        file_menu.addSeparator()
+        file_menu.addSeparator() #
         
         exit_action = QAction(self.style().standardIcon(QStyle.SP_DialogCloseButton), 
                              "Exit", self)
         exit_action.triggered.connect(self.close)
-        file_menu.addAction(exit_action)
+        file_menu.addAction(exit_action) #
         
         # Transfer menu
-        transfer_menu = self.menuBar().addMenu("Transfer")
+        transfer_menu = self.menuBar().addMenu("Transfer") #
         
         upload_action = QAction(self.style().standardIcon(QStyle.SP_ArrowUp), 
                                "Upload...", self)
         upload_action.triggered.connect(self.upload_file)
-        transfer_menu.addAction(upload_action)
+        transfer_menu.addAction(upload_action) #
         
         download_action = QAction(self.style().standardIcon(QStyle.SP_ArrowDown),
                                  "Download...", self)
         download_action.triggered.connect(self.download_file)
-        transfer_menu.addAction(download_action)
+        transfer_menu.addAction(download_action) #
         
-        server_to_server_action = QAction(self.style().standardIcon(QStyle.SP_DirLinkIcon),
-                                         "Server to Server Transfer...", self)
-        server_to_server_action.triggered.connect(self.server_to_server_transfer)
-        transfer_menu.addAction(server_to_server_action)
+        # Toggle Server to Server / Local to Server action
+        self.toggle_transfer_mode_action = QAction(
+            self.style().standardIcon(QStyle.SP_DirLinkIcon),
+            "Server to Server Transfer", self) # Initial text for switching TO S2S
+        self.toggle_transfer_mode_action.triggered.connect(self.toggle_transfer_mode)
+        transfer_menu.addAction(self.toggle_transfer_mode_action) #
         
         # Help menu
-        help_menu = self.menuBar().addMenu("Help")
+        help_menu = self.menuBar().addMenu("Help") #
         
         about_action = QAction(self.style().standardIcon(QStyle.SP_DialogHelpButton),
                               "About", self)
         about_action.triggered.connect(self.show_about)
-        help_menu.addAction(about_action)
+        help_menu.addAction(about_action) #
         
         # Restore the window geometry if available
-        self.restore_geometry()
+        self.restore_geometry() #
     
     def closeEvent(self, event):
         """Handle window close event"""
         # Save the window geometry
-        self.save_geometry()
+        self.save_geometry() #
         
+        # Disconnect any active SFTP clients
+        if self.remote_panel.client:
+            self.remote_panel.client.disconnect()
+        self.server_to_server_panel.disconnect_all() # Disconnect both clients in S2S panel
+
         # Stop transfer manager
-        self.transfer_manager.stop()
+        self.transfer_manager.stop() #
         
-        event.accept()
+        event.accept() #
     
     def save_geometry(self):
         """Save the window geometry to settings"""
         settings = QSettings("YourCompany", "FilePilot")
-        settings.setValue("geometry", self.saveGeometry())
-        settings.setValue("windowState", self.saveState())
+        settings.setValue("geometry", self.saveGeometry()) #
+        settings.setValue("windowState", self.saveState()) #
     
     def restore_geometry(self):
         """Restore the window geometry from settings"""
         settings = QSettings("YourCompany", "FilePilot")
         if settings.contains("geometry"):
-            self.restoreGeometry(settings.value("geometry"))
+            self.restoreGeometry(settings.value("geometry")) #
         if settings.contains("windowState"):
-            self.restoreState(settings.value("windowState"))
+            self.restoreState(settings.value("windowState")) #
     
     def new_connection(self):
         """Open the connection dialog to create a new connection"""
         dialog = ConnectionDialog(self)
         if dialog.exec_():
-            # Refresh connection list
-            self.refresh_connections()
+            # Refresh connection list in all panels
+            self.refresh_connections() #
     
     def manage_connections(self):
         """Open the connection manager dialog"""
         dialog = ConnectionManagerDialog(self.auth_manager, self)
-        dialog.exec_()
+        dialog.exec_() #
     
     def refresh_connections(self):
-        """Refresh the list of connections in the combo boxes"""
-        # Refresh in file panels
-        # Only access conn_combo on the remote panel
-        self.remote_panel.conn_combo.clear()
-        
-        connections = self.auth_manager.list_connections()
-        for conn in connections:
-            name = conn.get('name')
-            if name:
-                self.remote_panel.conn_combo.addItem(name)
-    
+        """Refresh the list of connections in the combo boxes for all panels"""
+        # Refresh in local-to-server remote panel
+        self.remote_panel.refresh_connections() #
+        # Refresh in server-to-server panels
+        self.server_to_server_panel.refresh_connections() #
+
+    def toggle_transfer_mode(self):
+        """Toggle between local-to-server and server-to-server transfer modes."""
+        if self.current_mode == "local_to_server": #
+            # Switch to server-to-server mode
+            self.current_mode = "server_to_server" #
+            self.transfer_mode_stacked_widget.setCurrentIndex(1) # Show server-to-server panel
+            self.toggle_transfer_mode_action.setText("Local to Server Transfer") #
+            self.toggle_transfer_mode_action.setIcon(self.style().standardIcon(QStyle.SP_ComputerIcon)) # Change icon
+            
+            # Disconnect previous remote connection if any
+            if self.remote_panel.client:
+                self.remote_panel.client.disconnect()
+                self.remote_panel.set_client(None) # Clear panel's client
+                self.remote_panel.file_model.removeRows(0, self.remote_panel.file_model.rowCount()) # Clear view
+                self.remote_panel.path_edit.setText("") # Clear path
+            self.status_bar.showMessage("Switched to Server to Server mode.") #
+            self.server_to_server_panel.refresh_connections() # Ensure connections are loaded
+        else:
+            # Switch to local-to-server mode
+            self.current_mode = "local_to_server" #
+            self.transfer_mode_stacked_widget.setCurrentIndex(0) # Show local-to-server panel
+            self.toggle_transfer_mode_action.setText("Server to Server Transfer") #
+            self.toggle_transfer_mode_action.setIcon(self.style().standardIcon(QStyle.SP_DirLinkIcon)) # Change icon
+
+            # Disconnect server-to-server connections if any
+            self.server_to_server_panel.disconnect_all() #
+            self.status_bar.showMessage("Switched to Local to Server mode.") #
+            # Re-initialize local panel to home directory
+            self.local_panel.load_directory(os.path.expanduser('~')) #
+
     def local_item_selected(self, path, is_dir):
-        """Handle file or directory selection in the local panel"""
+        """Handle file or directory selection in the local panel (only in local-to-server mode)."""
+        if self.current_mode != "local_to_server": #
+            # If not in local-to-server mode, this signal should ideally not be active or handled differently.
+            # For now, we'll just return to prevent unintended behavior.
+            return 
+
         # Extract the file/directory name from the path
-        name = os.path.basename(path)
+        name = os.path.basename(path) #
         
         # Get the current path in the remote panel
-        remote_path = self.remote_panel.current_path
+        remote_path = self.remote_panel.current_path #
         
         if not remote_path or not self.remote_panel.client:
             QMessageBox.warning(self, "No Remote Connection", 
@@ -306,16 +363,16 @@ class MainWindow(QMainWindow):
             return
         
         # Set up source and destination paths
-        source_path = path
+        source_full_path = path #
         
         if is_dir:
             # If it's a directory, use the remote path as destination
-            destination_path = os.path.join(remote_path, name)
+            destination_full_path = os.path.join(remote_path, name) #
             
             # Confirm directory upload
             reply = QMessageBox.question(
                 self, "Upload Directory",
-                f"Upload directory '{name}' to '{destination_path}'?", 
+                f"Upload directory '{name}' to '{destination_full_path}'?", 
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
                 
             if reply != QMessageBox.Yes:
@@ -323,196 +380,251 @@ class MainWindow(QMainWindow):
         else:
             # If it's a file, ask where to upload
             default_dest = os.path.join(remote_path, name) if remote_path else name
-            destination_path = QInputDialog.getText(
+            destination_full_path = QInputDialog.getText(
                 self, "Upload File", 
                 "Remote destination path:", 
                 QLineEdit.Normal, 
                 default_dest)[0]
             
-            if not destination_path:
+            if not destination_full_path:
                 return
         
         # Start the transfer using the signal bridge for thread-safe callbacks
         transfer_id = self.transfer_manager.upload_file(
-            source_path, destination_path, self.signal_bridge.update_progress)
+            source_full_path, destination_full_path, 
+            # Pass TransferType.UPLOAD and a reference to the remote_panel
+            lambda tid, tr, tt: self.signal_bridge.update_progress(tid, tr, tt, TransferType.UPLOAD, self.remote_panel))
         
         if transfer_id:
-            self.status_bar.showMessage(f"Upload started: {name} → {destination_path}", 5000)
+            # Track the upload with its destination path (for refresh)
+            self.active_uploads[transfer_id] = destination_full_path 
+
+            self.status_bar.showMessage(f"Upload started: {name} → {destination_full_path}", 5000) #
             # Force immediate update of the transfer panel
-            self.transfer_panel.update_transfers()
+            self.transfer_panel.update_transfers() #
         else:
-            QMessageBox.critical(self, "Upload Failed", "Failed to start upload.")
+            QMessageBox.critical(self, "Upload Failed", "Failed to start upload.") #
     
     def remote_item_selected(self, path, is_dir):
-        """Handle file or directory selection in the remote panel"""
+        """Handle file or directory selection in the remote panel (only in local-to-server mode)."""
+        if self.current_mode != "local_to_server": #
+            # If not in local-to-server mode, this signal should ideally not be active or handled differently.
+            # For now, we'll just return to prevent unintended behavior.
+            return
+
         # Extract the file/directory name from the path
-        name = os.path.basename(path)
+        name = os.path.basename(path) #
         
         # Get the current path in the local panel
-        local_path = self.local_panel.current_path
+        local_path = self.local_panel.current_path #
         
         # Set up source and destination paths
-        source_path = path
+        source_full_path = path #
         
         if is_dir:
             # If it's a directory, ask for confirmation and use the local path as destination
-            destination_path = os.path.join(local_path, name)
+            destination_full_path = os.path.join(local_path, name) #
             
             # Confirm directory download
             reply = QMessageBox.question(
                 self, "Download Directory",
-                f"Download directory '{name}' to '{destination_path}'?", 
+                f"Download directory '{name}' to '{destination_full_path}'?", 
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
                 
             if reply != QMessageBox.Yes:
                 return
         else:
             # If it's a file, ask where to download
-            default_dest = os.path.join(local_path, name)
-            destination_path, _ = QFileDialog.getSaveFileName(
+            default_dest = os.path.join(local_path, name) #
+            destination_full_path, _ = QFileDialog.getSaveFileName(
                 self, "Download File", default_dest)
             
-            if not destination_path:
+            if not destination_full_path:
                 return
         
         # Start the transfer using the signal bridge for thread-safe callbacks
         transfer_id = self.transfer_manager.download_file(
-            source_path, destination_path, self.signal_bridge.update_progress)
-        
+                source_full_path, destination_full_path, 
+                lambda tid, tr, tt: self.signal_bridge.update_progress(tid, tr, tt, TransferType.DOWNLOAD, None)) #
+            
         if transfer_id:
             # Track the download with its destination path
-            self.active_downloads[transfer_id] = destination_path
+            self.active_downloads[transfer_id] = destination_full_path #
             
-            self.status_bar.showMessage(f"Download started: {name} → {destination_path}", 5000)
+            self.status_bar.showMessage(f"Download started: {name} → {destination_full_path}", 5000) #
             # Force immediate update of the transfer panel
-            self.transfer_panel.update_transfers()
+            self.transfer_panel.update_transfers() #
         else:
-            QMessageBox.critical(self, "Download Failed", "Failed to start download.")
+            QMessageBox.critical(self, "Download Failed", "Failed to start download.") #
     
     def upload_file(self):
-        """Upload a file or directory to the remote server"""
+        """Upload a file or directory to the remote server (only in local-to-server mode)."""
+        if self.current_mode != "local_to_server": #
+            QMessageBox.information(self, "Mode Mismatch", "Upload/Download actions are for Local to Server mode. Please switch modes or use Server to Server transfer directly.")
+            return
+
         # Get the selected file or directory from the local panel
-        selected_items = self.local_panel.file_view.selectedIndexes()
+        selected_items = self.local_panel.file_view.selectedIndexes() #
         if not selected_items:
             QMessageBox.warning(self, "No Selection", "Please select a file or directory to upload.")
             return
         
         # For now, just get the first selected item
-        index = selected_items[0]
-        name = index.data(Qt.UserRole)
-        is_dir = index.data(Qt.UserRole + 1)
+        index = selected_items[0] #
+        # Data is stored in column 0 of the model, not the index itself
+        full_path = index.sibling(index.row(), 0).data(Qt.UserRole) 
+        is_dir = index.sibling(index.row(), 0).data(Qt.UserRole + 1)
         
         # Get the current path in the remote panel
-        remote_path = self.remote_panel.current_path
+        remote_path = self.remote_panel.current_path #
         
         if is_dir:
-            # If it's a directory, just use the remote path
-            source_path = os.path.join(self.local_panel.current_path, name)
-            destination_path = remote_path
+            # If it's a directory, just use the remote path as the base for destination
+            source_path = full_path
+            # The destination path should be the remote_path plus the directory name
+            destination_path = os.path.join(remote_path, os.path.basename(full_path)).replace('\\', '/')
         else:
             # If it's a file, ask where to upload
-            destination_path, _ = QFileDialog.getSaveFileName(self, "Upload File", remote_path)
-            source_path = os.path.join(self.local_panel.current_path, name)
+            # Pre-fill with the remote current path and the file name
+            default_remote_path = os.path.join(remote_path, os.path.basename(full_path)).replace('\\', '/')
+            destination_path, ok = QInputDialog.getText(self, "Upload File", "Remote destination path:", QLineEdit.Normal, default_remote_path)
+            if not ok or not destination_path:
+                return
+            source_path = full_path
         
         if destination_path:
             # Start the transfer using the signal bridge for thread-safe callbacks
             transfer_id = self.transfer_manager.upload_file(
-                source_path, destination_path, self.signal_bridge.update_progress)
+                source_path, destination_path, 
+                # Pass TransferType.UPLOAD and a reference to the remote_panel
+                lambda tid, tr, tt: self.signal_bridge.update_progress(tid, tr, tt, TransferType.UPLOAD, self.remote_panel))
             
             if transfer_id:
+                # Track the upload with its destination path (for refresh)
+                self.active_uploads[transfer_id] = destination_path
+
                 QMessageBox.information(self, "Upload Started", 
-                                        f"Upload started with ID: {transfer_id}")
+                                        f"Upload of '{os.path.basename(source_path)}' started.") #
                 # Force immediate update of the transfer panel
-                self.transfer_panel.update_transfers()
+                self.transfer_panel.update_transfers() #
             else:
-                QMessageBox.critical(self, "Upload Failed", "Failed to start upload.")
+                QMessageBox.critical(self, "Upload Failed", "Failed to start upload.") #
     
     def download_file(self):
-        """Download a file or directory from the remote server"""
+        """Download a file or directory from the remote server (only in local-to-server mode)."""
+        if self.current_mode != "local_to_server": #
+            QMessageBox.information(self, "Mode Mismatch", "Upload/Download actions are for Local to Server mode. Please switch modes or use Server to Server transfer directly.")
+            return
+
         # Get the selected file or directory from the remote panel
-        selected_items = self.remote_panel.file_view.selectedIndexes()
+        selected_items = self.remote_panel.file_view.selectedIndexes() #
         if not selected_items:
             QMessageBox.warning(self, "No Selection", "Please select a file or directory to download.")
             return
         
         # For now, just get the first selected item
-        index = selected_items[0]
-        name = index.data(Qt.UserRole)
-        is_dir = index.data(Qt.UserRole + 1)
+        index = selected_items[0] #
+        # Data is stored in column 0 of the model, not the index itself
+        full_path = index.sibling(index.row(), 0).data(Qt.UserRole)
+        is_dir = index.sibling(index.row(), 0).data(Qt.UserRole + 1)
         
         # Get the current path in the local panel
-        local_path = self.local_panel.current_path
+        local_path = self.local_panel.current_path #
         
         if is_dir:
-            # If it's a directory, just use the local path
-            source_path = os.path.join(self.remote_panel.current_path, name)
-            destination_path = local_path
+            # If it's a directory, use the local path as the base for destination
+            source_path = full_path
+            # The destination path should be the local_path plus the directory name
+            destination_path = os.path.join(local_path, os.path.basename(full_path))
+            
+            # Confirm directory download
+            reply = QMessageBox.question(
+                self, "Download Directory",
+                f"Download directory '{os.path.basename(source_path)}' to '{destination_path}'?", 
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+                
+            if reply != QMessageBox.Yes:
+                return
         else:
             # If it's a file, ask where to download
-            destination_path, _ = QFileDialog.getSaveFileName(self, "Download File", local_path)
-            source_path = os.path.join(self.remote_panel.current_path, name)
+            # Pre-fill with the local current path and the file name
+            default_local_path = os.path.join(local_path, os.path.basename(full_path))
+            destination_path, _ = QFileDialog.getSaveFileName(self, "Download File", default_local_path)
+            if not destination_path:
+                return
+            source_path = full_path
         
         if destination_path:
             # Start the transfer using the signal bridge for thread-safe callbacks
             transfer_id = self.transfer_manager.download_file(
-                source_path, destination_path, self.signal_bridge.update_progress)
+                source_path, destination_path, 
+                lambda tid, tr, tt: self.signal_bridge.update_progress(tid, tr, tt, TransferType.DOWNLOAD, None)) #
             
             if transfer_id:
                 # Track the download with its destination path
-                self.active_downloads[transfer_id] = destination_path
+                self.active_downloads[transfer_id] = destination_path #
                 
                 QMessageBox.information(self, "Download Started", 
-                                        f"Download started with ID: {transfer_id}")
+                                        f"Download of '{os.path.basename(source_path)}' started.") #
                 # Force immediate update of the transfer panel
-                self.transfer_panel.update_transfers()
+                self.transfer_panel.update_transfers() #
             else:
-                QMessageBox.critical(self, "Download Failed", "Failed to start download.")
+                QMessageBox.critical(self, "Download Failed", "Failed to start download.") #
     
     def server_to_server_transfer(self):
-        """Transfer a file or directory between two servers"""
-        # This is a placeholder for the server-to-server transfer implementation
-        QMessageBox.information(self, "Server to Server Transfer", 
-                                "This feature is not yet implemented.")
+        """This menu action is now handled by toggle_transfer_mode."""
+        pass # This method is no longer directly called by the menu action
     
-    def on_transfer_progress(self, transfer_id, transferred, total):
-        """Update the transfer progress in the UI"""
+    def on_transfer_progress(self, transfer_id: int, transferred: int, total: int,
+                            transfer_type: TransferType, destination_panel_ref: object = None): #
+        """
+        Update the transfer progress in the UI and refresh panels on transfer completion.
+        'destination_panel_ref' is the actual FilePanel object for S2S transfers.
+        """
         # Find the transfer in the active table
-        table = self.transfer_panel.active_table
+        table = self.transfer_panel.active_table #
         found = False
         
-        for row in range(table.rowCount()):
-            if table.item(row, 0) and int(table.item(row, 0).text()) == transfer_id:
+        for row in range(table.rowCount()): #
+            if table.item(row, 0) and int(table.item(row, 0).text()) == transfer_id: #
                 # Update the progress column
-                progress_item = QTableWidgetItem(f"{transferred / total * 100:.1f}%")
-                table.setItem(row, 5, progress_item)
+                progress_item = QTableWidgetItem(f"{transferred / total * 100:.1f}%") #
+                table.setItem(row, 5, progress_item) #
                 
                 # Update size column
                 size_text = f"{transferred / (1024*1024):.2f} MB / {total / (1024*1024):.2f} MB"
-                table.setItem(row, 7, QTableWidgetItem(size_text))
+                table.setItem(row, 7, QTableWidgetItem(size_text)) #
                 
                 found = True
                 break
         
-        # Check if this is a download and if it's complete
-        if transfer_id in self.active_downloads and transferred >= total and total > 0:
-            # Get the destination directory
-            dest_path = self.active_downloads[transfer_id]
-            dest_dir = os.path.dirname(dest_path)
+        # Check if this is a completed transfer
+        if transferred >= total and total > 0:
+            if transfer_type == TransferType.DOWNLOAD: #
+                if transfer_id in self.active_downloads: #
+                    dest_path = self.active_downloads[transfer_id] #
+                    # Always refresh the local panel on download completion.
+                    QTimer.singleShot(500, self.local_panel.refresh) #
+                    self.status_bar.showMessage(f"Download completed: {os.path.basename(dest_path)}", 5000) #
+                    del self.active_downloads[transfer_id] #
             
-            # Force refresh of the local panel
-            if os.path.exists(dest_path):
-                # If local panel is showing the destination directory
-                if dest_dir == self.local_panel.current_path:
-                    # Use QTimer to schedule refresh after a slight delay
-                    QTimer.singleShot(500, self.local_panel.refresh)
-                    self.status_bar.showMessage(f"Download completed: {os.path.basename(dest_path)}", 5000)
-                
-                # Remove from active downloads since it's complete
-                del self.active_downloads[transfer_id]
-        
-        # If transfer wasn't found in the table, request UI update
-        if not found:
-            self.transfer_panel.update_transfers()
+            elif transfer_type == TransferType.UPLOAD:
+                if transfer_id in self.active_uploads:
+                    dest_path = self.active_uploads[transfer_id]
+                    # Refresh the remote panel on upload completion
+                    QTimer.singleShot(500, self.remote_panel.refresh)
+                    self.status_bar.showMessage(f"Upload completed: {os.path.basename(dest_path)}", 5000)
+                    del self.active_uploads[transfer_id]
+            
+            elif transfer_type == TransferType.SERVER_TO_SERVER: #
+                # Refresh the destination panel if a reference was provided
+                if destination_panel_ref and isinstance(destination_panel_ref, FilePanel): #
+                    QTimer.singleShot(500, destination_panel_ref.refresh) #
+                    self.status_bar.showMessage(f"Server-to-server transfer completed to {destination_panel_ref.current_path}", 5000) #
+            
+            # If transfer wasn't found in the table, request UI update
+            if not found:
+                self.transfer_panel.update_transfers() #
     
     def show_about(self):
         """Show the about dialog"""
@@ -521,7 +633,7 @@ class MainWindow(QMainWindow):
                           "<p>Version 1.0</p>"
                           "<p>A simple SFTP client using PyQt and Paramiko.</p>"
                           "<p>Copyright © 2025 ALT+F4</p>"
-                          "<p><a href='https://www.altf4.com'>www.altf4.com</a></p>")
+                          "<p><a href='https://www.altf4.com'>www.altf4.com</a></p>") #
 
 
 def run_app():
@@ -531,5 +643,5 @@ def run_app():
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
-    window.refresh_connections()
-    sys.exit(app.exec_())
+    window.refresh_connections() #
+    sys.exit(app.exec_()) #
