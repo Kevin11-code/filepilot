@@ -22,5 +22,20 @@
     "username": "arcon",
     "key_path": null,
     "has_password": true
+  },
+  {
+    "name": "ananya",
+    "host": "10.10.2.139",
+    "port": 22,
+    "username": "arcon",
+    "key_path": "/home/arcon/test_key_2.ppk"
+  },
+  {
+    "name": "kevin",
+    "host": "10.10.2.139",
+    "port": 22,
+    "username": "arcon",
+    "key_path": "/home/arcon/mykey.pem",
+    "has_passphrase": true
   }
 ]
