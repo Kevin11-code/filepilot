@@ -338,7 +338,7 @@ class FilePanel(QWidget):
              pass # Already at root, cannot go up further
         
         if parent_path != self.current_path: # Prevent endless loop at root
-            self.load_directory(parent_path)
+            self.load_directory(parent_path.replace("\\", "/"))
 
     def refresh(self):
         """Refreshes the current directory view."""

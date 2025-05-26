@@ -4,6 +4,9 @@ import json
 import logging
 import time
 import stat
+import io
+import tempfile
+import subprocess
 from typing import Dict, Optional, Union, Tuple, Callable
 
 class SFTPClient:
@@ -52,11 +55,141 @@ class SFTPClient:
             if key_path:
                 # Key-based authentication
                 self.logger.info(f"Using key-based authentication with key: {key_path}")
-                if passphrase:
-                    key = paramiko.RSAKey.from_private_key_file(key_path, password=passphrase)
-                else:
-                    key = paramiko.RSAKey.from_private_key_file(key_path)
-                self.ssh.connect(host, port=port, username=username, pkey=key)
+                try:
+                    # Handle different key formats
+                    if key_path.lower().endswith('.ppk'):
+                        self.logger.info("Detected PuTTY private key (.ppk) format")
+                        
+                        # Create a temporary PEM file to convert the PPK format
+                        temp_pem_file = None
+                        
+                        try:
+                            # Try using puttygen to convert the key (if available)
+                            try:
+                                # Create a temporary file for the converted key
+                                with tempfile.NamedTemporaryFile(delete=False, suffix='.pem') as tmp:
+                                    temp_pem_file = tmp.name
+                                
+                                # Try to convert using puttygen command
+                                cmd = ["puttygen", key_path, "-O", "private-openssh", "-o", temp_pem_file]
+                                if passphrase:
+                                    # If the source has a passphrase
+                                    cmd.extend(["-P", passphrase])
+                                
+                                self.logger.info(f"Attempting to convert PPK using puttygen: {' '.join(cmd)}")
+                                subprocess.run(cmd, check=True)
+                                self.logger.info(f"PPK conversion successful, using converted key at {temp_pem_file}")
+                                
+                                # Now connect using the converted key
+                                self.ssh.connect(
+                                    host, 
+                                    port=port, 
+                                    username=username, 
+                                    key_filename=temp_pem_file
+                                )
+                                
+                            except (subprocess.SubprocessError, FileNotFoundError):
+                                # puttygen not available or failed, try ssh-keygen
+                                self.logger.warning("puttygen failed, trying ssh-keygen")
+                                
+                                if temp_pem_file and os.path.exists(temp_pem_file):
+                                    os.unlink(temp_pem_file)
+                                
+                                # Create a new temp file for ssh-keygen output
+                                with tempfile.NamedTemporaryFile(delete=False, suffix='.pem') as tmp:
+                                    temp_pem_file = tmp.name
+                                
+                                # Try to use ssh-keygen to extract public key
+                                cmd = ["ssh-keygen", "-f", key_path, "-e", "-m", "pem"]
+                                self.logger.info(f"Attempting to convert PPK using ssh-keygen: {' '.join(cmd)}")
+                                
+                                try:
+                                    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                                    with open(temp_pem_file, 'w') as f:
+                                        f.write(result.stdout)
+                                    
+                                    # Now connect using the converted key
+                                    self.ssh.connect(
+                                        host, 
+                                        port=port, 
+                                        username=username, 
+                                        key_filename=temp_pem_file
+                                    )
+                                except subprocess.SubprocessError:
+                                    # Both conversion methods failed, fall back to direct paramiko methods
+                                    self.logger.warning("All conversion methods failed, trying direct paramiko loading")
+                                    raise
+                            
+                        except Exception as convert_err:
+                            self.logger.warning(f"PPK conversion failed: {str(convert_err)}, trying direct paramiko loading")
+                            
+                            # Last resort: try to load directly with paramiko
+                            try:
+                                # Try RSA key format
+                                key = paramiko.RSAKey.from_private_key_file(
+                                    key_path, 
+                                    password=passphrase if passphrase else None
+                                )
+                                self.ssh.connect(host, port=port, username=username, pkey=key)
+                            except Exception as rsa_err:
+                                # If RSA doesn't work, try DSS
+                                try:
+                                    key = paramiko.DSSKey.from_private_key_file(
+                                        key_path, 
+                                        password=passphrase if passphrase else None
+                                    )
+                                    self.ssh.connect(host, port=port, username=username, pkey=key)
+                                except Exception as dss_err:
+                                    # If that doesn't work, try Ed25519
+                                    try:
+                                        key = paramiko.Ed25519Key.from_private_key_file(
+                                            key_path, 
+                                            password=passphrase if passphrase else None
+                                        )
+                                        self.ssh.connect(host, port=port, username=username, pkey=key)
+                                    except Exception as ed_err:
+                                        # If all direct loading methods fail, try SSH agent
+                                        try:
+                                            agent = paramiko.Agent()
+                                            agent_keys = agent.get_keys()
+                                            if not agent_keys:
+                                                raise Exception("No SSH agent keys available")
+                                                
+                                            for agent_key in agent_keys:
+                                                try:
+                                                    self.ssh.connect(host, port=port, username=username, pkey=agent_key)
+                                                    self.logger.info("Connected successfully using SSH agent key")
+                                                    break
+                                                except:
+                                                    continue
+                                            else:
+                                                raise Exception("No SSH agent keys worked for authentication")
+                                        except Exception as agent_err:
+                                            # If everything fails, raise a detailed error
+                                            raise Exception(f"Failed to load .ppk key file after trying all methods: {str(agent_err)}")
+                                            
+                        finally:
+                            # Clean up the temporary file if it exists
+                            if temp_pem_file and os.path.exists(temp_pem_file):
+                                try:
+                                    os.unlink(temp_pem_file)
+                                except:
+                                    pass
+                                    
+                    else:
+                        # Standard OpenSSH keys (.pem, .key, etc)
+                        self.logger.info("Using standard OpenSSH key format")
+                        self.ssh.connect(
+                            host, 
+                            port=port, 
+                            username=username, 
+                            key_filename=key_path,
+                            passphrase=passphrase if passphrase else None
+                        )
+                    
+                except Exception as key_err:
+                    self.logger.error(f"Key authentication error: {str(key_err)}")
+                    raise
             else:
                 # Password-based authentication
                 self.logger.info("Using password-based authentication")

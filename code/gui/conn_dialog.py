@@ -65,7 +65,8 @@ class ConnectionDialog(QDialog):
         # Key passphrase (optional)
         self.passphrase_edit = QLineEdit()
         self.passphrase_edit.setEchoMode(QLineEdit.Password)
-        form.addRow("Passphrase:", self.passphrase_edit)
+        self.passphrase_edit.setPlaceholderText("Leave empty if key has no passphrase")
+        form.addRow("Passphrase (Optional):", self.passphrase_edit)
         
         # Storage options
         self.use_keyring = QCheckBox("Store credentials in system keyring")
@@ -123,7 +124,8 @@ class ConnectionDialog(QDialog):
     def browse_key_file(self):
         """Open file dialog to select key file"""
         file_path, _ = QFileDialog.getOpenFileName(
-            self, "Select Private Key", "", "All Files (*)"
+            self, "Select Private Key", "", 
+            "Private Key Files (*.ppk *.pem *.key);;PuTTY Private Keys (*.ppk);;OpenSSH Keys (*.pem *.key);;All Files (*)"
         )
         if file_path:
             self.key_path_edit.setText(file_path)
