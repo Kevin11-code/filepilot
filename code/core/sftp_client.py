@@ -721,3 +721,130 @@ class SFTPClient:
         except Exception as e:
             self.logger.error(f"Error during recursive remote directory deletion of {remote_path}: {str(e)}")
             return False
+
+    def get_home_directory(self) -> str:
+        """
+        Get the home directory of the current user on the remote server.
+        
+        Returns:
+            str: Path to the user's home directory, or "/" if unable to determine
+        """
+        if not self.sftp:
+            self.logger.error("Not connected to an SFTP server")
+            return "/"
+            
+        try:
+            # Try to get the home directory using the SFTP normalize method
+            # This works by normalizing "." which should resolve to the user's home directory
+            home_path = self.sftp.normalize(".")
+            self.logger.info(f"Home directory determined as: {home_path}")
+            return home_path
+        except Exception as e:
+            self.logger.warning(f"Could not determine home directory using SFTP normalize: {e}")
+            
+            try:
+                # Fallback: try using SSH to execute pwd command
+                if self.ssh:
+                    stdin, stdout, stderr = self.ssh.exec_command("pwd")
+                    home_path = stdout.read().decode().strip()
+                    if home_path and home_path != "/":
+                        self.logger.info(f"Home directory determined via SSH pwd: {home_path}")
+                        return home_path
+            except Exception as ssh_e:
+                self.logger.warning(f"Could not determine home directory using SSH pwd: {ssh_e}")
+            
+            try:
+                # Another fallback: try echo $HOME (Unix/Linux/macOS)
+                if self.ssh:
+                    stdin, stdout, stderr = self.ssh.exec_command("echo $HOME")
+                    home_path = stdout.read().decode().strip()
+                    if home_path and home_path != "/" and not home_path.startswith("$"):
+                        self.logger.info(f"Home directory determined via SSH $HOME: {home_path}")
+                        return home_path
+            except Exception as env_e:
+                self.logger.warning(f"Could not determine home directory using $HOME: {env_e}")
+            
+            try:
+                # Windows fallback: try echo %USERPROFILE%
+                if self.ssh:
+                    stdin, stdout, stderr = self.ssh.exec_command("echo %USERPROFILE%")
+                    home_path = stdout.read().decode().strip()
+                    if home_path and not home_path.startswith("%") and len(home_path) > 3:
+                        # Convert Windows path to forward slashes for consistency
+                        home_path = home_path.replace("\\", "/")
+                        self.logger.info(f"Home directory determined via Windows %USERPROFILE%: {home_path}")
+                        return home_path
+            except Exception as win_e:
+                self.logger.warning(f"Could not determine home directory using Windows %USERPROFILE%: {win_e}")
+            
+            try:
+                # Windows alternative: try echo %HOMEPATH% with %HOMEDRIVE%
+                if self.ssh:
+                    stdin, stdout, stderr = self.ssh.exec_command("echo %HOMEDRIVE%%HOMEPATH%")
+                    home_path = stdout.read().decode().strip()
+                    if home_path and not home_path.startswith("%") and len(home_path) > 3:
+                        # Convert Windows path to forward slashes for consistency
+                        home_path = home_path.replace("\\", "/")
+                        self.logger.info(f"Home directory determined via Windows %HOMEDRIVE%%HOMEPATH%: {home_path}")
+                        return home_path
+            except Exception as win2_e:
+                self.logger.warning(f"Could not determine home directory using Windows %HOMEDRIVE%%HOMEPATH%: {win2_e}")
+            
+            # Final fallback for different operating systems
+            if self.connection_config and self.connection_config.get('username'):
+                username = self.connection_config['username']
+                
+                # Try common home directory patterns
+                try:
+                    # Linux/Unix pattern
+                    linux_home = f"/home/{username}"
+                    try:
+                        self.sftp.stat(linux_home)
+                        self.logger.info(f"Found Linux-style home directory: {linux_home}")
+                        return linux_home
+                    except FileNotFoundError:
+                        pass
+                    
+                    # Try root home
+                    if username == "root":
+                        try:
+                            self.sftp.stat("/root")
+                            self.logger.info("Found root home directory: /root")
+                            return "/root"
+                        except FileNotFoundError:
+                            pass
+                    
+                    # macOS pattern (same as Linux usually)
+                    mac_home = f"/Users/{username}"
+                    try:
+                        self.sftp.stat(mac_home)
+                        self.logger.info(f"Found macOS-style home directory: {mac_home}")
+                        return mac_home
+                    except FileNotFoundError:
+                        pass
+                    
+                    # Windows patterns
+                    # Try C:/Users/username (modern Windows)
+                    win_home_modern = f"C:/Users/{username}"
+                    try:
+                        self.sftp.stat(win_home_modern)
+                        self.logger.info(f"Found Windows-style home directory: {win_home_modern}")
+                        return win_home_modern
+                    except FileNotFoundError:
+                        pass
+                    
+                    # Try C:/Documents and Settings/username (older Windows)
+                    win_home_old = f"C:/Documents and Settings/{username}"
+                    try:
+                        self.sftp.stat(win_home_old)
+                        self.logger.info(f"Found old Windows-style home directory: {win_home_old}")
+                        return win_home_old
+                    except FileNotFoundError:
+                        pass
+                        
+                except Exception as pattern_e:
+                    self.logger.warning(f"Could not check common home directory patterns: {pattern_e}")
+            
+            # If all else fails, return root
+            self.logger.warning("Could not determine home directory, defaulting to root (/)")
+            return "/"

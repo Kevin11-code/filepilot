@@ -14,6 +14,7 @@ import shutil # Import shutil for recursive local directory deletion
 
 from code.core.auth_manager import AuthManager
 from code.core.sftp_client import SFTPClient
+from code.utils.file_utils import FileIconProvider
 
 class FilePanel(QWidget):
     itemSelected = pyqtSignal(str, bool) # path, is_directory
@@ -24,6 +25,7 @@ class FilePanel(QWidget):
         self.client = None # SFTPClient instance for remote, or None for local
         self.current_path = "" # Initialize current_path attribute
         self.auth_manager = AuthManager() # Initialize AuthManager
+        self.icon_provider = FileIconProvider() # Initialize icon provider
 
         self.setup_ui()
         self.load_directory(os.path.expanduser("~") if not is_remote else "/") # Initial directory
@@ -95,6 +97,8 @@ class FilePanel(QWidget):
         self.file_view.setIndentation(10)
         self.file_view.setSelectionMode(QAbstractItemView.ExtendedSelection) # Allow multiple selection
         self.file_view.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.file_view.setEditTriggers(QAbstractItemView.NoEditTriggers)  # Disable all cell editing
+        self.file_view.clicked.connect(self.on_item_clicked)  # Handle single clicks
         self.file_view.doubleClicked.connect(self.on_item_double_clicked)
         self.file_view.setContextMenuPolicy(Qt.CustomContextMenu)
         self.file_view.customContextMenuRequested.connect(self.show_context_menu)
@@ -176,7 +180,9 @@ class FilePanel(QWidget):
             
             if connected:
                 self.set_client(new_client)
-                self.current_path = "/" # Set default path after connection
+                # Get the user's home directory instead of defaulting to root
+                home_dir = new_client.get_home_directory()
+                self.current_path = home_dir
                 self.load_directory(self.current_path)
                 self.path_edit.setText(self.current_path)
                 QMessageBox.information(self, "Connected", f"Successfully connected to {conn_name}.")
@@ -243,14 +249,16 @@ class FilePanel(QWidget):
                     # Store full path for operations
                     item_name.setData(os.path.join(path, f.filename).replace('\\', '/'), Qt.UserRole)
                     item_name.setData(stat.S_ISDIR(f.st_mode), Qt.UserRole + 1) # is_directory
+                    
+                    # Use custom icons from FileIconProvider
                     if stat.S_ISDIR(f.st_mode):
-                        item_name.setIcon(QIcon(self.style().standardIcon(QStyle.SP_DirIcon)))
+                        item_name.setIcon(self.icon_provider.get_folder_icon())
                     else:
-                        item_name.setIcon(QIcon(self.style().standardIcon(QStyle.SP_FileIcon)))
+                        item_name.setIcon(self.icon_provider.get_icon_for_file(f.filename))
                     
                     self.file_model.appendRow([
                         item_name,
-                        QStandardItem(self.format_size(f.st_size)),
+                        QStandardItem("" if stat.S_ISDIR(f.st_mode) else self.format_size(f.st_size)),
                         QStandardItem("Directory" if stat.S_ISDIR(f.st_mode) else "File"),
                         QStandardItem(self.format_permissions(f.st_mode)),
                         # Use getattr to safely access owner_name and group_name
@@ -262,14 +270,16 @@ class FilePanel(QWidget):
                     item_name = QStandardItem(f['name'])
                     item_name.setData(f['path'], Qt.UserRole) # Store full path
                     item_name.setData(f['is_dir'], Qt.UserRole + 1) # is_directory
+                    
+                    # Use custom icons from FileIconProvider
                     if f['is_dir']:
-                        item_name.setIcon(QIcon(self.style().standardIcon(QStyle.SP_DirIcon)))
+                        item_name.setIcon(self.icon_provider.get_folder_icon())
                     else:
-                        item_name.setIcon(QIcon(self.style().standardIcon(QStyle.SP_FileIcon)))
+                        item_name.setIcon(self.icon_provider.get_icon_for_file(f['name']))
 
                     self.file_model.appendRow([
                         item_name,
-                        QStandardItem(self.format_size(f['size'])),
+                        QStandardItem("" if f['is_dir'] else self.format_size(f['size'])),
                         QStandardItem("Directory" if f['is_dir'] else "File"),
                         QStandardItem(f['permissions']),
                         QStandardItem(f['owner']),
@@ -346,14 +356,24 @@ class FilePanel(QWidget):
 
     def on_item_double_clicked(self, index: QModelIndex):
         """Handle double-clicking on an item in the file view."""
-        path = index.data(Qt.UserRole)
-        is_dir = index.data(Qt.UserRole + 1)
-        
-        if is_dir:
-            self.load_directory(path)
-        # else:
-        #     # Emit signal for file selection, main window will handle transfer
-        #     self.itemSelected.emit(path, False)
+        if index.isValid():
+            # Get the index for the first column (name column) to retrieve data
+            name_index = self.file_model.index(index.row(), 0)
+            path = name_index.data(Qt.UserRole)
+            is_dir = name_index.data(Qt.UserRole + 1)
+            
+            if is_dir:
+                # For directories, navigate into them
+                self.load_directory(path)
+            else:
+                # For files, emit signal for transfer (upload/download)
+                self.itemSelected.emit(path, False)
+
+    def on_item_clicked(self, index: QModelIndex):
+        """Handle single-clicking on an item in the file view."""
+        # Single click just selects the row - no additional action needed
+        # The selection is handled automatically by the QTreeView
+        pass
 
     def show_context_menu(self, position):
         """Show context menu for selected items."""

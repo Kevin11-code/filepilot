@@ -91,8 +91,8 @@ class CLIHandler:
         
         # List command
         list_parser = subparsers.add_parser('list', help='List directory contents')
-        list_parser.add_argument('remote_path', nargs='?', default='.',
-                               help='Remote path to list (default: current directory)')
+        list_parser.add_argument('remote_path', nargs='?', default=None,
+                               help='Remote path to list (default: user home directory)')
         self._add_connection_args(list_parser)
         
         # Connection management commands
@@ -401,12 +401,20 @@ class CLIHandler:
             self.logger.error("Connection failed")
             sys.exit(1)
             
+        # Determine the path to list
+        if args.remote_path is None:
+            # No path specified, use the user's home directory
+            list_path = client.get_home_directory()
+            self.logger.info(f"No path specified, using home directory: {list_path}")
+        else:
+            list_path = args.remote_path
+            
         # List directory
         try:
-            files = client.list_directory(args.remote_path)
+            files = client.list_directory(list_path)
             
             if not args.quiet:
-                print(f"Contents of {args.remote_path}:")
+                print(f"Contents of {list_path}:")
                 print("{:<40} {:<12} {:<6} {:<20}".format("Name", "Size", "Type", "Modified"))
                 print("-" * 80)
                 
@@ -416,7 +424,7 @@ class CLIHandler:
                     ftype = 'dir' if stat.S_ISDIR(attr.st_mode) else 'file'
                     modified = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(attr.st_mtime))
                     if ftype == 'dir':
-                        size_str = "<DIR>"
+                        size_str = ""  # Empty string for directories
                     else:
                         if size < 1024:
                             size_str = f"{size} B"
