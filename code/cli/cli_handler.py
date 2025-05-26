@@ -1,14 +1,18 @@
+import argparse
 import os
 import sys
-import time
-import argparse
-import getpass
-from typing import Dict, List, Optional
 import json
-import stat
+import getpass
+from typing import Dict, Any, Optional
 
+# Add the parent directory to the path to allow imports
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+sys.path.insert(0, parent_dir)
+
+from ..core.auth_manager import AuthManager
+from ..utils.secure_string import SecureString, get_credential_manager
 from ..core.sftp_client import SFTPClient
-from ..core.auth_manager import AuthManager, SecureString, _credential_manager
 from ..core.transfer_manager import TransferManager
 from ..utils.logger import LoggerSetup
 
@@ -56,7 +60,7 @@ class CLIHandler:
         self._active_credentials.clear()
         
         # Also clear global credentials
-        _credential_manager.clear_all_credentials()
+        get_credential_manager().clear_all_credentials()
 
     def parse_args(self):
         """
@@ -191,7 +195,7 @@ class CLIHandler:
         conn_arg = getattr(args, f'{prefix}connection', None) or getattr(args, 'connection', None)
         if conn_arg:
             # Load saved connection
-            conn = self.auth_manager.get_connection(conn_arg)
+            conn = self.auth_manager.get_connection_secure(conn_arg)
             if not conn:
                 self.logger.error(f"Connection not found: {conn_arg}")
                 sys.exit(1)

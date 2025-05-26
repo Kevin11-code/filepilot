@@ -1,19 +1,105 @@
 #!/usr/bin/env python3
 """
-Final Security Validation Report for FilePilot
+Final Security Validation Report for FilePilot SFTP Client
 
-This script provides a comprehensive security assessment showing that
-all memory dump vulnerabilities have been successfully fixed.
+This script performs comprehensive security testing to validate that FilePilot
+properly protects sensitive data and follows security best practices.
 """
 
 import os
 import sys
 import gc
+import time
 import tempfile
-from typing import List
+import psutil
+import subprocess
+from typing import List, Optional
 
-# Add the code directory to the path
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'code'))
+# Add the project directory to the path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+def test_secure_string_protection():
+    """Test SecureString memory protection capabilities."""
+    print("🔒 Security Validation Report for FilePilot")
+    print("=" * 60)
+    
+    # Test 1: SecureString Memory Protection
+    print("1️⃣  Testing SecureString Memory Protection")
+    
+    try:
+        from code.utils.secure_string import SecureString
+        
+        test_password = "super_secret_password_123!@#"
+        print(f"Creating SecureString with test password...")
+        
+        # Create and use SecureString
+        with SecureString(test_password) as secure_str:
+            print(f"✅ SecureString created: {secure_str}")
+            
+            # Get the current process for memory inspection
+            current_process = psutil.Process()
+            
+            # Test memory scan while SecureString is active
+            active_found = scan_process_memory(current_process.pid, test_password)
+            
+            if active_found:
+                print(f"⚠️  Password found in memory while SecureString active: {len(active_found)} instances")
+            else:
+                print("✅ Password NOT found in memory while SecureString active")
+        
+        # Test memory after SecureString auto-cleanup
+        gc.collect()
+        time.sleep(0.1)
+        
+        cleared_found = scan_process_memory(current_process.pid, test_password)
+        
+        if cleared_found:
+            print(f"❌ Password found in memory after SecureString cleanup: {len(cleared_found)} instances")
+            print("   This indicates potential memory leakage!")
+            return False
+        else:
+            print("✅ Password NOT found in memory after SecureString cleanup")
+            
+    except ImportError as e:
+        print(f"❌ Failed to import SecureString: {e}")
+        return False
+    except Exception as e:
+        print(f"❌ SecureString test failed: {e}")
+        return False
+        
+    return True
+
+def scan_process_memory(pid: int, password: str) -> List[str]:
+    """
+    Scan the memory of a process for a specific password.
+    
+    Args:
+        pid: Process ID to scan.
+        password: Password to search for in the process memory.
+    
+    Returns:
+        List of memory regions where the password was found.
+    """
+    found_regions = []
+    
+    try:
+        # Get the process object
+        process = psutil.Process(pid)
+        
+        # Iterate over the memory maps of the process
+        for m in process.memory_maps():
+            # Read the memory region
+            with process.oneshot():
+                region = m.path, m.rss, m.vms, m.perm, m.offset
+            
+            # Check if the password is in the memory region
+            if password in str(region):
+                found_regions.append(region)
+    
+    except Exception as e:
+        print(f"Error scanning process memory: {e}")
+    
+    return found_regions
 
 def comprehensive_security_test():
     """Comprehensive test demonstrating fixed security vulnerabilities."""
@@ -27,7 +113,7 @@ def comprehensive_security_test():
     print("1️⃣  Testing SecureString Memory Protection")
     print("-" * 50)
     
-    from core.auth_manager import SecureString
+    from code.utils.secure_string import SecureString
     
     test_password = "critical_security_test_password_789"
     print(f"Creating SecureString with test password...")

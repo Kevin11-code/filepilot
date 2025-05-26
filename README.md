@@ -45,7 +45,7 @@ FilePilot includes several security measures to protect sensitive credentials fr
 FilePilot uses a `SecureString` class to minimize password exposure in memory dumps:
 
 ```python
-from code.core.auth_manager import SecureString
+from code.utils.secure_string import SecureString
 
 # Create secure password wrapper
 secure_password = SecureString("my_password")
