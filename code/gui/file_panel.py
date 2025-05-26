@@ -486,7 +486,8 @@ class FilePanel(QWidget):
 
             if success:
                 QMessageBox.information(self, "Delete Success", f"Successfully deleted '{os.path.basename(path)}'.")
-                self.refresh() # Refresh the view after deletion
+                # Refresh immediately after successful deletion
+                QTimer.singleShot(100, self.refresh)
             else:
                 # If success is False, an error message should have been logged/displayed by SFTPClient or local ops
                 QMessageBox.critical(self, "Delete Failed", f"Failed to delete '{os.path.basename(path)}'. Check logs for details.")
@@ -513,7 +514,8 @@ class FilePanel(QWidget):
 
             if success:
                 QMessageBox.information(self, "Rename Success", f"Successfully renamed '{os.path.basename(old_path)}' to '{os.path.basename(new_path)}'.")
-                self.refresh() # Refresh the view after rename
+                # Refresh immediately after successful rename
+                QTimer.singleShot(100, self.refresh)
             else:
                 QMessageBox.critical(self, "Rename Failed", f"Failed to rename '{os.path.basename(old_path)}'. Check logs for details.")
         except Exception as e:

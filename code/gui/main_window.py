@@ -689,15 +689,31 @@ class MainWindow(QMainWindow):
                 found = True
                 break
         
-        # Check if this is a completed transfer
+        # Check if this is a completed transfer (either by bytes or by checking transfer status)
+        transfer_completed = False
+        
+        # Check completion by bytes transferred
         if transferred >= total and total > 0:
-            if transfer_type == TransferType.DOWNLOAD: #
-                if transfer_id in self.active_downloads: #
-                    dest_path = self.active_downloads[transfer_id] #
-                    # Always refresh the local panel on download completion.
-                    QTimer.singleShot(500, self.local_panel.refresh) #
-                    self.status_bar.showMessage(f"Download completed: {os.path.basename(dest_path)}", 5000) #
-                    del self.active_downloads[transfer_id] #
+            transfer_completed = True
+        
+        # Also check the actual transfer status in case bytes comparison isn't reliable
+        if not transfer_completed:
+            transfer_status = self.transfer_manager.get_transfer_status(transfer_id)
+            if transfer_status and transfer_status.get('status') == 'COMPLETED':
+                transfer_completed = True
+        
+        if transfer_completed:
+            if transfer_type == TransferType.DOWNLOAD:
+                if transfer_id in self.active_downloads:
+                    dest_path = self.active_downloads[transfer_id]
+                    # Always refresh the local panel on download completion
+                    QTimer.singleShot(500, self.local_panel.refresh)
+                    self.status_bar.showMessage(f"Download completed: {os.path.basename(dest_path)}", 5000)
+                    del self.active_downloads[transfer_id]
+                else:
+                    # Fallback: refresh local panel even if transfer ID not tracked
+                    QTimer.singleShot(500, self.local_panel.refresh)
+                    self.status_bar.showMessage("Download completed", 5000)
             
             elif transfer_type == TransferType.UPLOAD:
                 if transfer_id in self.active_uploads:
@@ -706,16 +722,28 @@ class MainWindow(QMainWindow):
                     QTimer.singleShot(500, self.remote_panel.refresh)
                     self.status_bar.showMessage(f"Upload completed: {os.path.basename(dest_path)}", 5000)
                     del self.active_uploads[transfer_id]
+                else:
+                    # Fallback: refresh remote panel even if transfer ID not tracked
+                    QTimer.singleShot(500, self.remote_panel.refresh)
+                    self.status_bar.showMessage("Upload completed", 5000)
             
-            elif transfer_type == TransferType.SERVER_TO_SERVER: #
+            elif transfer_type == TransferType.SERVER_TO_SERVER:
                 # Refresh the destination panel if a reference was provided
-                if destination_panel_ref and isinstance(destination_panel_ref, FilePanel): #
-                    QTimer.singleShot(500, destination_panel_ref.refresh) #
-                    self.status_bar.showMessage(f"Server-to-server transfer completed to {destination_panel_ref.current_path}", 5000) #
+                if destination_panel_ref and isinstance(destination_panel_ref, FilePanel):
+                    QTimer.singleShot(500, destination_panel_ref.refresh)
+                    self.status_bar.showMessage(f"Server-to-server transfer completed to {destination_panel_ref.current_path}", 5000)
+                else:
+                    # Fallback: refresh both server-to-server panels if no specific reference
+                    QTimer.singleShot(500, self.server_to_server_panel.source_panel.refresh)
+                    QTimer.singleShot(500, self.server_to_server_panel.destination_panel.refresh)
+                    self.status_bar.showMessage("Server-to-server transfer completed", 5000)
             
-            # If transfer wasn't found in the table, request UI update
-            if not found:
-                self.transfer_panel.update_transfers() #
+            # Force an immediate transfer panel update to reflect completion
+            QTimer.singleShot(100, self.transfer_panel.update_transfers)
+        
+        # If transfer wasn't found in the table, request UI update
+        if not found:
+            self.transfer_panel.update_transfers()
     
     def show_about(self):
         """Show the about dialog"""
