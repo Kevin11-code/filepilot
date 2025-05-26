@@ -132,7 +132,7 @@ class ConnectionDialog(QDialog):
     
     def load_connection(self, name):
         """Load connection settings for editing"""
-        connection = self.auth_manager.get_connection(name)
+        connection = self.auth_manager.get_connection_secure(name)
         if connection:
             self.name_edit.setText(connection.get('name', ''))
             self.host_edit.setText(connection.get('host', ''))
@@ -143,12 +143,22 @@ class ConnectionDialog(QDialog):
             if connection.get('key_path'):
                 self.auth_type.setCurrentText("Key File")
                 self.key_path_edit.setText(connection.get('key_path', ''))
+                # Handle SecureString passphrase
                 if 'passphrase' in connection:
-                    self.passphrase_edit.setText(connection['passphrase'])
+                    passphrase = connection['passphrase']
+                    if hasattr(passphrase, 'get_value'):
+                        self.passphrase_edit.setText(passphrase.get_value())
+                    else:
+                        self.passphrase_edit.setText(str(passphrase))
             else:
                 self.auth_type.setCurrentText("Password")
+                # Handle SecureString password
                 if 'password' in connection:
-                    self.password_edit.setText(connection['password'])
+                    password = connection['password']
+                    if hasattr(password, 'get_value'):
+                        self.password_edit.setText(password.get_value())
+                    else:
+                        self.password_edit.setText(str(password))
     
     def test_connection(self):
         """Test the SFTP connection with current settings"""
@@ -204,29 +214,41 @@ class ConnectionDialog(QDialog):
             QMessageBox.warning(self, "Input Error", "Name, host and username are required.")
             return
         
-        # Build connection parameters for saving
-        params = {
-            'name': name,
-            'host': host,
-            'port': port,
-            'username': username,
-            'use_keyring': self.use_keyring.isChecked(),
-            'encrypt': self.encrypt_config.isChecked()
-        }
+        # Get auth parameters
+        password = None
+        key_path = None
+        passphrase = None
         
         if self.auth_type.currentText() == "Password":
-            params['password'] = self.password_edit.text()
+            password = self.password_edit.text() if self.password_edit.text() else None
         else:
-            params['key_path'] = self.key_path_edit.text()
-            if self.passphrase_edit.text():
-                params['passphrase'] = self.passphrase_edit.text()
-                
+            key_path = self.key_path_edit.text() if self.key_path_edit.text() else None
+            passphrase = self.passphrase_edit.text() if self.passphrase_edit.text() else None
+        
+        # Get encryption password if needed
+        encryption_password = None
         if self.encrypt_config.isChecked():
-            params['encryption_password'] = self.encryption_password.text()
+            encryption_password = self.encryption_password.text()
+            if not encryption_password:
+                QMessageBox.warning(self, "Input Error", "Encryption password is required when encryption is enabled.")
+                return
             
-        # Save connection
+        # Save connection using the secure method
         try:
-            if self.auth_manager.save_connection(**params):
+            success = self.auth_manager.save_connection_secure(
+                name=name,
+                host=host,
+                port=port,
+                username=username,
+                password=password,
+                key_path=key_path,
+                passphrase=passphrase,
+                use_keyring=self.use_keyring.isChecked(),
+                encrypt=self.encrypt_config.isChecked(),
+                encryption_password=encryption_password
+            )
+            
+            if success:
                 self.accept()  # Close dialog
             else:
                 QMessageBox.critical(self, "Error", "Failed to save connection.")

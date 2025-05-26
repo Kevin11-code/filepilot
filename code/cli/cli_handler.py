@@ -8,7 +8,7 @@ import json
 import stat
 
 from ..core.sftp_client import SFTPClient
-from ..core.auth_manager import AuthManager
+from ..core.auth_manager import AuthManager, SecureString, _credential_manager
 from ..core.transfer_manager import TransferManager
 from ..utils.logger import LoggerSetup
 
@@ -16,7 +16,7 @@ from ..utils.logger import LoggerSetup
 class CLIHandler:
     """
     Command Line Interface handler for FilePilot.
-    Provides command-line operations for SFTP transfers.
+    Provides command-line operations for SFTP transfers with secure credential handling.
     """
     def __init__(self, config_dir=None):
         """
@@ -42,6 +42,22 @@ class CLIHandler:
         self.auth_manager = AuthManager(self.config_dir)
         self.transfer_manager = TransferManager(logger=self.logger)
         
+        # Track active credentials for cleanup
+        self._active_credentials = []
+
+    def _cleanup_credentials(self):
+        """Clean up all active credentials."""
+        for cred in self._active_credentials:
+            try:
+                if hasattr(cred, 'clear'):
+                    cred.clear()
+            except:
+                pass
+        self._active_credentials.clear()
+        
+        # Also clear global credentials
+        _credential_manager.clear_all_credentials()
+
     def parse_args(self):
         """
         Parse command line arguments.
@@ -245,51 +261,207 @@ class CLIHandler:
                 
         return config
     
+    def _get_connection_config_secure(self, args, prefix=''):
+        """
+        Extract connection configuration from arguments using SecureString for passwords.
+        
+        Args:
+            args: Parsed arguments
+            prefix: Optional prefix used in argument names
+            
+        Returns:
+            dict: Connection configuration with SecureString for sensitive data
+        """
+        # Check if using a saved connection
+        conn_arg = getattr(args, f'{prefix}connection', None) or getattr(args, 'connection', None)
+        if conn_arg:
+            # Load saved connection with secure credentials
+            conn = self.auth_manager.get_connection_secure(conn_arg)
+            if not conn:
+                self.logger.error(f"Connection not found: {conn_arg}")
+                sys.exit(1)
+            
+            # Track credentials for cleanup
+            if 'password' in conn and isinstance(conn['password'], SecureString):
+                self._active_credentials.append(conn['password'])
+            if 'passphrase' in conn and isinstance(conn['passphrase'], SecureString):
+                self._active_credentials.append(conn['passphrase'])
+                
+            return conn
+        
+        # Build connection config from arguments
+        host = getattr(args, f'{prefix}host', None)
+        if not host:
+            self.logger.error(f"Host is required. Use --{prefix}host or --connection")
+            sys.exit(1)
+            
+        username = getattr(args, f'{prefix}username', None)
+        if not username:
+            self.logger.error(f"Username is required. Use --{prefix}username")
+            sys.exit(1)
+            
+        # Build the basic config
+        config = {
+            'host': host,
+            'port': getattr(args, f'{prefix}port', 22),
+            'username': username
+        }
+        
+        # Handle authentication
+        key_file = getattr(args, f'{prefix}key_file', None)
+        
+        if key_file:
+            # Key-based authentication
+            if not os.path.exists(key_file):
+                self.logger.error(f"Key file not found: {key_file}")
+                sys.exit(1)
+                
+            config['key_path'] = key_file
+            
+            # Handle passphrase if needed - wrap in SecureString
+            passphrase = getattr(args, f'{prefix}passphrase', None)
+            passphrase_stdin = getattr(args, f'{prefix}passphrase_stdin', False)
+            passphrase_env = getattr(args, f'{prefix}passphrase_env', None)
+            
+            if passphrase:
+                secure_passphrase = SecureString(passphrase)
+                config['passphrase'] = secure_passphrase
+                self._active_credentials.append(secure_passphrase)
+                # Clear the original variable
+                passphrase = None
+                del passphrase
+            elif passphrase_stdin:
+                passphrase_value = getpass.getpass('Key passphrase: ')
+                secure_passphrase = SecureString(passphrase_value)
+                config['passphrase'] = secure_passphrase
+                self._active_credentials.append(secure_passphrase)
+                # Clear the local variable
+                passphrase_value = None
+                del passphrase_value
+            elif passphrase_env:
+                passphrase_value = os.environ.get(passphrase_env)
+                if not passphrase_value:
+                    self.logger.error(f"Passphrase environment variable {passphrase_env} not found")
+                    sys.exit(1)
+                secure_passphrase = SecureString(passphrase_value)
+                config['passphrase'] = secure_passphrase
+                self._active_credentials.append(secure_passphrase)
+                # Clear the local variable
+                passphrase_value = None
+                del passphrase_value
+        else:
+            # Password-based authentication - wrap in SecureString
+            password = getattr(args, f'{prefix}password', None)
+            password_stdin = getattr(args, f'{prefix}password_stdin', False)
+            password_env = getattr(args, f'{prefix}password_env', None)
+            
+            if password:
+                secure_password = SecureString(password)
+                config['password'] = secure_password
+                self._active_credentials.append(secure_password)
+                # Clear the original variable
+                password = None
+                del password
+            elif password_stdin:
+                password_value = getpass.getpass('SFTP password: ')
+                secure_password = SecureString(password_value)
+                config['password'] = secure_password
+                self._active_credentials.append(secure_password)
+                # Clear the local variable
+                password_value = None
+                del password_value
+            elif password_env:
+                password_value = os.environ.get(password_env)
+                if not password_value:
+                    self.logger.error(f"Password environment variable {password_env} not found")
+                    sys.exit(1)
+                secure_password = SecureString(password_value)
+                config['password'] = secure_password
+                self._active_credentials.append(secure_password)
+                # Clear the local variable
+                password_value = None
+                del password_value
+            else:
+                # If no password method specified, prompt
+                password_value = getpass.getpass('SFTP password: ')
+                secure_password = SecureString(password_value)
+                config['password'] = secure_password
+                self._active_credentials.append(secure_password)
+                # Clear the local variable
+                password_value = None
+                del password_value
+                
+        return config
+
     def run(self):
         """
         Run the CLI application based on arguments.
         """
-        args = self.parse_args()
-        
-        # Set up verbosity
-        if args.quiet:
-            self.logger.setLevel(40)  # ERROR level
-        elif args.verbose:
-            self.logger.setLevel(10)  # DEBUG level
-        
-        # Process commands
-        if args.command == 'upload':
-            self._handle_upload(args)
-        elif args.command == 'download':
-            self._handle_download(args)
-        elif args.command == 'rename':
-            self._handle_rename(args)
-        elif args.command == 's2s':
-            self._handle_server_to_server(args)
-        elif args.command == 'list':
-            self._handle_list(args)
-        elif args.command == 'connection':
-            self._handle_connection_commands(args)
-        else:
-            self.logger.error("No command specified. Use -h for help.")
-            sys.exit(1)
+        try:
+            args = self.parse_args()
+            
+            # Set up verbosity
+            if args.quiet:
+                self.logger.setLevel(40)  # ERROR level
+            elif args.verbose:
+                self.logger.setLevel(10)  # DEBUG level
+            
+            # Process commands using secure methods
+            if args.command == 'upload':
+                self._handle_upload_secure(args)
+            elif args.command == 'download':
+                self._handle_download_secure(args)
+            elif args.command == 'rename':
+                self._handle_rename_secure(args)
+            elif args.command == 's2s':
+                self._handle_server_to_server_secure(args)
+            elif args.command == 'list':
+                self._handle_list_secure(args)
+            elif args.command == 'connection':
+                self._handle_connection_commands_secure(args)
+            else:
+                self.logger.error("No command specified. Use -h for help.")
+                sys.exit(1)
+        finally:
+            # Always cleanup credentials
+            self._cleanup_credentials()
     
-    def _handle_upload(self, args):
-        """Handle file upload command."""
+    def _handle_upload_secure(self, args):
+        """Handle file upload command with secure credential handling."""
         if not os.path.exists(args.local_path):
             self.logger.error(f"Local path not found: {args.local_path}")
             sys.exit(1)
             
-        config = self._get_connection_config(args)
+        config = self._get_connection_config_secure(args)
         
         # Create SFTP client
         client = SFTPClient(logger=self.logger)
         
+        # Extract credentials for connection
+        connect_config = config.copy()
+        
+        # Convert SecureString objects to plain strings for connection
+        if 'password' in connect_config and isinstance(connect_config['password'], SecureString):
+            connect_config['password'] = connect_config['password'].get_value()
+        if 'passphrase' in connect_config and isinstance(connect_config['passphrase'], SecureString):
+            connect_config['passphrase'] = connect_config['passphrase'].get_value()
+        
+        # Remove non-connection fields
+        connect_config.pop('name', None)
+        
         # Connect to server
         self.logger.info(f"Connecting to {config['host']}:{config['port']} as {config['username']}")
-        if not client.connect(**config):
+        if not client.connect(**connect_config):
             self.logger.error("Connection failed")
             sys.exit(1)
+            
+        # Clear connection config after use
+        if 'password' in connect_config:
+            connect_config['password'] = None
+            del connect_config['password']
+        if 'passphrase' in connect_config:
+            connect_config['passphrase'] = None
+            del connect_config['passphrase']
             
         # Upload file
         if os.path.isdir(args.local_path):
@@ -318,29 +490,47 @@ class CLIHandler:
         # Disconnect
         client.disconnect()
     
-    def _handle_download(self, args):
-        """Handle file download command."""
-        config = self._get_connection_config(args)
+    def _handle_download_secure(self, args):
+        """Handle file download command with secure credential handling."""
+        config = self._get_connection_config_secure(args)
         
         # Create SFTP client
         client = SFTPClient(logger=self.logger)
         
+        # Extract credentials for connection
+        connect_config = config.copy()
+        
+        # Convert SecureString objects to plain strings for connection
+        if 'password' in connect_config and isinstance(connect_config['password'], SecureString):
+            connect_config['password'] = connect_config['password'].get_value()
+        if 'passphrase' in connect_config and isinstance(connect_config['passphrase'], SecureString):
+            connect_config['passphrase'] = connect_config['passphrase'].get_value()
+        
+        # Remove non-connection fields
+        connect_config.pop('name', None)
+        
         # Connect to server
         self.logger.info(f"Connecting to {config['host']}:{config['port']} as {config['username']}")
-        if not client.connect(**config):
+        if not client.connect(**connect_config):
             self.logger.error("Connection failed")
             sys.exit(1)
             
+        # Clear connection config after use
+        if 'password' in connect_config:
+            connect_config['password'] = None
+            del connect_config['password']
+        if 'passphrase' in connect_config:
+            connect_config['passphrase'] = None
+            del connect_config['passphrase']
+            
         # Check if remote path exists
         try:
-            # This will raise an exception if the file doesn't exist
             client.sftp.stat(args.remote_path)
         except:
             self.logger.error(f"Remote path not found: {args.remote_path}")
             sys.exit(1)
             
         # Download file
-        # Progress callback for direct download
         def progress(bytes_transferred, total_bytes, percent):
             if not args.quiet:
                 sys.stdout.write(f"\rDownloading: {percent:.1f}% ({bytes_transferred/(1024*1024):.2f} MB / {total_bytes/(1024*1024):.2f} MB)")
@@ -362,27 +552,70 @@ class CLIHandler:
         # Disconnect
         client.disconnect()
 
-    def _handle_rename(self, args):
-        config = self._get_connection_config(args)
+    def _handle_rename_secure(self, args):
+        """Handle rename command with secure credential handling."""
+        config = self._get_connection_config_secure(args)
         client = SFTPClient(logger=self.logger)
+        
+        # Extract credentials for connection
+        connect_config = config.copy()
+        
+        # Convert SecureString objects to plain strings for connection
+        if 'password' in connect_config and isinstance(connect_config['password'], SecureString):
+            connect_config['password'] = connect_config['password'].get_value()
+        if 'passphrase' in connect_config and isinstance(connect_config['passphrase'], SecureString):
+            connect_config['passphrase'] = connect_config['passphrase'].get_value()
+        
+        # Remove non-connection fields
+        connect_config.pop('name', None)
+        
         self.logger.info(f"Connecting to {config['host']}:{config['port']} as {config['username']}")
-        if not client.connect(**config):
+        if not client.connect(**connect_config):
             self.logger.error("Connection failed")
             sys.exit(1)
+            
+        # Clear connection config after use
+        if 'password' in connect_config:
+            connect_config['password'] = None
+            del connect_config['password']
+        if 'passphrase' in connect_config:
+            connect_config['passphrase'] = None
+            del connect_config['passphrase']
+            
         result = client.rename(args.old_path, args.new_path)
         client.disconnect()
+        
         if result:
             print(f"Renamed '{args.old_path}' to '{args.new_path}' successfully.")
         else:
             print(f"Failed to rename '{args.old_path}'.")
     
-    def _handle_server_to_server(self, args):
-        """Handle server to server transfer command."""
-        source_config = self._get_connection_config(args, prefix='source_')
-        dest_config = self._get_connection_config(args, prefix='dest_')
+    def _handle_server_to_server_secure(self, args):
+        """Handle server to server transfer command with secure credential handling."""
+        source_config = self._get_connection_config_secure(args, prefix='source_')
+        dest_config = self._get_connection_config_secure(args, prefix='dest_')
         
         # Create SFTP client
         client = SFTPClient(logger=self.logger)
+        
+        # Extract credentials for connection
+        source_connect_config = source_config.copy()
+        dest_connect_config = dest_config.copy()
+        
+        # Convert SecureString objects to plain strings for connection
+        if 'password' in source_connect_config and isinstance(source_connect_config['password'], SecureString):
+            source_connect_config['password'] = source_connect_config['password'].get_value()
+        if 'passphrase' in source_connect_config and isinstance(source_connect_config['passphrase'], SecureString):
+            source_connect_config['passphrase'] = source_connect_config['passphrase'].get_value()
+            
+        if 'password' in dest_connect_config and isinstance(dest_connect_config['password'], SecureString):
+            dest_connect_config['password'] = dest_connect_config['password'].get_value()
+        if 'passphrase' in dest_connect_config and isinstance(dest_connect_config['passphrase'], SecureString):
+            dest_connect_config['passphrase'] = dest_connect_config['passphrase'].get_value()
+        
+        # Remove non-connection fields
+        source_connect_config.pop('name', None)
+        dest_connect_config.pop('name', None)
         
         # Progress callback for transfer
         def progress(bytes_transferred, total_bytes, percent):
@@ -393,12 +626,21 @@ class CLIHandler:
         # Perform server to server transfer
         self.logger.info(f"Starting server-to-server transfer from {args.source_path} to {args.dest_path}")
         result = client.server_to_server_transfer(
-            source_config, 
-            dest_config, 
+            source_connect_config, 
+            dest_connect_config, 
             args.source_path, 
             args.dest_path,
             progress_callback=progress
         )
+        
+        # Clear connection configs after use
+        for config in [source_connect_config, dest_connect_config]:
+            if 'password' in config:
+                config['password'] = None
+                del config['password']
+            if 'passphrase' in config:
+                config['passphrase'] = None
+                del config['passphrase']
         
         if result:
             if not args.quiet:
@@ -410,22 +652,41 @@ class CLIHandler:
             self.logger.error("Server-to-server transfer failed")
             sys.exit(1)
     
-    def _handle_list(self, args):
-        """Handle list directory command."""
-        config = self._get_connection_config(args)
+    def _handle_list_secure(self, args):
+        """Handle list directory command with secure credential handling."""
+        config = self._get_connection_config_secure(args)
         
         # Create SFTP client
         client = SFTPClient(logger=self.logger)
         
+        # Extract credentials for connection
+        connect_config = config.copy()
+        
+        # Convert SecureString objects to plain strings for connection
+        if 'password' in connect_config and isinstance(connect_config['password'], SecureString):
+            connect_config['password'] = connect_config['password'].get_value()
+        if 'passphrase' in connect_config and isinstance(connect_config['passphrase'], SecureString):
+            connect_config['passphrase'] = connect_config['passphrase'].get_value()
+        
+        # Remove non-connection fields
+        connect_config.pop('name', None)
+        
         # Connect to server
         self.logger.info(f"Connecting to {config['host']}:{config['port']} as {config['username']}")
-        if not client.connect(**config):
+        if not client.connect(**connect_config):
             self.logger.error("Connection failed")
             sys.exit(1)
             
+        # Clear connection config after use
+        if 'password' in connect_config:
+            connect_config['password'] = None
+            del connect_config['password']
+        if 'passphrase' in connect_config:
+            connect_config['passphrase'] = None
+            del connect_config['passphrase']
+            
         # Determine the path to list
         if args.remote_path is None:
-            # No path specified, use the user's home directory
             list_path = client.get_home_directory()
             self.logger.info(f"No path specified, using home directory: {list_path}")
         else:
@@ -446,7 +707,7 @@ class CLIHandler:
                     ftype = 'dir' if stat.S_ISDIR(attr.st_mode) else 'file'
                     modified = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(attr.st_mtime))
                     if ftype == 'dir':
-                        size_str = ""  # Empty string for directories
+                        size_str = ""
                     else:
                         if size < 1024:
                             size_str = f"{size} B"
@@ -465,10 +726,10 @@ class CLIHandler:
         # Disconnect
         client.disconnect()
     
-    def _handle_connection_commands(self, args):
-        """Handle connection management commands."""
+    def _handle_connection_commands_secure(self, args):
+        """Handle connection management commands with secure credential handling."""
         if args.conn_command == 'add':
-            self._handle_add_connection(args)
+            self._handle_add_connection_secure(args)
         elif args.conn_command == 'list':
             self._handle_list_connections(args)
         elif args.conn_command == 'remove':
@@ -477,56 +738,48 @@ class CLIHandler:
             self.logger.error("Unknown connection command. Use -h for help.")
             sys.exit(1)
     
-    def _handle_add_connection(self, args):
-        """Handle adding a connection."""
-        config = self._get_connection_config(args)
+    def _handle_add_connection_secure(self, args):
+        """Handle adding a connection with secure credential handling."""
+        config = self._get_connection_config_secure(args)
+        
+        # Extract SecureString objects for secure storage
+        password = config.pop('password', None)
+        passphrase = config.pop('passphrase', None)
         
         # Add name and encryption options
-        config['name'] = args.name
-        config['use_keyring'] = getattr(args, 'use_keyring', False)
-        config['encrypt'] = getattr(args, 'encrypt', False)
+        use_keyring = getattr(args, 'use_keyring', False)
+        encrypt = getattr(args, 'encrypt', False)
         
-        # If encrypting, prompt for password
-        if config['encrypt']:
-            config['encryption_password'] = getpass.getpass('Encryption password: ')
+        encryption_password = None
+        if encrypt:
+            encryption_password = getpass.getpass('Encryption password: ')
         
-        # Save connection
+        # Save connection using secure method
         self.logger.info(f"Saving connection: {args.name}")
-        if self.auth_manager.save_connection(**config):
+        success = self.auth_manager.save_connection_secure(
+            name=args.name,
+            host=config['host'],
+            port=config['port'],
+            username=config['username'],
+            key_path=config.get('key_path'),
+            password=password,
+            passphrase=passphrase,
+            use_keyring=use_keyring,
+            encrypt=encrypt,
+            encryption_password=encryption_password
+        )
+        
+        # Clear encryption password
+        if encryption_password:
+            encryption_password = None
+            del encryption_password
+        
+        if success:
             if not args.quiet:
-                print(f"Connection {args.name} saved successfully")
-            self.logger.info(f"Connection {args.name} saved successfully")
+                print(f"Connection {args.name} saved securely")
+            self.logger.info(f"Connection {args.name} saved securely")
         else:
             self.logger.error(f"Failed to save connection {args.name}")
-            sys.exit(1)
-    
-    def _handle_list_connections(self, args):
-        """Handle listing connections."""
-        connections = self.auth_manager.list_connections()
-        
-        if not args.quiet:
-            if not connections:
-                print("No saved connections")
-            else:
-                print("{:<20} {:<30} {:<10}".format("Name", "Host", "Auth Type"))
-                print("-" * 60)
-                
-                for conn in connections:
-                    auth_type = "Key" if conn.get('key_path') else "Password"
-                    print("{:<20} {:<30} {:<10}".format(
-                        conn.get('name', 'Unnamed'), 
-                        f"{conn.get('host', 'Unknown')}:{conn.get('port', 22)}", 
-                        auth_type))
-    
-    def _handle_remove_connection(self, args):
-        """Handle removing a connection."""
-        self.logger.info(f"Removing connection: {args.name}")
-        if self.auth_manager.delete_connection(args.name):
-            if not args.quiet:
-                print(f"Connection {args.name} removed successfully")
-            self.logger.info(f"Connection {args.name} removed successfully")
-        else:
-            self.logger.error(f"Failed to remove connection {args.name}")
             sys.exit(1)
 
 

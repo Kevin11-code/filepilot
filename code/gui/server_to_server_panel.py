@@ -127,12 +127,19 @@ class ServerToServerPanel(QWidget):
         source_conn_name = self.source_panel.conn_combo.currentText()
         dest_conn_name = self.destination_panel.conn_combo.currentText()
         
-        source_config = self.auth_manager.get_connection(source_conn_name)
-        dest_config = self.auth_manager.get_connection(dest_conn_name)
+        source_config = self.auth_manager.get_connection_secure(source_conn_name)
+        dest_config = self.auth_manager.get_connection_secure(dest_conn_name)
 
         if not source_config or not dest_config:
             QMessageBox.critical(self, "Configuration Error", "Could not retrieve connection details for transfer.")
             return
+
+        # Handle SecureString objects in configs - convert to plain strings for transfer
+        for config in [source_config, dest_config]:
+            if 'password' in config and hasattr(config['password'], 'get_value'):
+                config['password'] = config['password'].get_value()
+            if 'passphrase' in config and hasattr(config['passphrase'], 'get_value'):
+                config['passphrase'] = config['passphrase'].get_value()
 
         # Queue the server-to-server transfer
         transfer_id = self.transfer_manager.queue_server_to_server(

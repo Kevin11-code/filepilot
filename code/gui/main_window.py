@@ -207,11 +207,111 @@ class MainWindow(QMainWindow):
         # Initialize the local panel with home directory
         self.local_panel.load_directory(os.path.expanduser('~')) #
         
-        # Set application font
-        font = QFont()
-        font.setFamily("Arial")
-        font.setPointSize(9)
-        QApplication.setFont(font)
+        # Set application font with modern typography
+        self.setup_modern_fonts()
+        
+    def setup_modern_fonts(self):
+        """Configure modern fonts for the application"""
+        # Set up the main application font with fallbacks
+        main_font = QFont()
+        
+        # Try to use system fonts in order of preference with better detection
+        font_families = [
+            "Inter",         # Modern web/UI font if available
+            "-apple-system", # macOS system font
+            "BlinkMacSystemFont", # Alternative macOS system font
+            "Segoe UI",      # Windows 10/11 system font
+            "Roboto",        # Android/Material Design
+            "Oxygen",        # KDE Plasma font
+            "Ubuntu",        # Ubuntu system font
+            "Cantarell",     # GNOME system font
+            "Fira Sans",     # Mozilla's font
+            "Droid Sans",    # Alternative Android font
+            "Helvetica Neue", # Modern Helvetica
+            "sans-serif"     # Generic fallback
+        ]
+        
+        # Find the first available font with better matching
+        selected_font = "sans-serif"  # fallback
+        for font_family in font_families:
+            test_font = QFont(font_family)
+            if test_font.exactMatch() or font_family in ["sans-serif", "-apple-system", "BlinkMacSystemFont"]:
+                selected_font = font_family
+                break
+        
+        # Configure main font properties with better settings
+        main_font.setFamily(selected_font)
+        main_font.setPointSize(10)  # Optimal size for readability
+        main_font.setWeight(QFont.Normal)
+        main_font.setStyleHint(QFont.SansSerif)
+        main_font.setStyleStrategy(QFont.PreferAntialias | QFont.PreferQuality)
+        main_font.setHintingPreference(QFont.PreferFullHinting)
+        
+        # Set as the default application font
+        QApplication.setFont(main_font)
+        
+        # Configure specific fonts for different UI elements
+        self.setup_ui_specific_fonts()
+        
+    def setup_ui_specific_fonts(self):
+        """Setup fonts for specific UI elements with better typography"""
+        # Header font for labels and important text
+        self.header_font = QFont()
+        header_families = ["Inter", "Segoe UI", "SF Pro Display", "Roboto", "Ubuntu", "sans-serif"]
+        for font_family in header_families:
+            self.header_font.setFamily(font_family)
+            if self.header_font.exactMatch() or font_family == "sans-serif":
+                break
+        self.header_font.setPointSize(12)
+        self.header_font.setWeight(QFont.DemiBold)
+        self.header_font.setStyleStrategy(QFont.PreferAntialias | QFont.PreferQuality)
+        
+        # Monospace font for file paths and technical data
+        self.mono_font = QFont()
+        mono_families = [
+            "JetBrains Mono",     # Modern coding font
+            "SF Mono",            # macOS monospace
+            "Cascadia Code",      # Windows Terminal font
+            "Fira Code",          # Popular coding font
+            "Source Code Pro",    # Adobe's coding font
+            "Consolas",           # Windows monospace
+            "Monaco",             # macOS fallback
+            "Menlo",              # macOS alternative
+            "Ubuntu Mono",        # Ubuntu monospace
+            "DejaVu Sans Mono",   # Linux fallback
+            "Liberation Mono",    # Open source alternative
+            "monospace"           # Generic fallback
+        ]
+        
+        for font_family in mono_families:
+            self.mono_font.setFamily(font_family)
+            if self.mono_font.exactMatch() or font_family == "monospace":
+                break
+        self.mono_font.setPointSize(9)
+        self.mono_font.setWeight(QFont.Normal)
+        self.mono_font.setStyleStrategy(QFont.PreferAntialias | QFont.PreferQuality)
+        
+        # Small font for status and secondary information
+        self.small_font = QFont()
+        small_families = ["Inter", "Segoe UI", "SF Pro Text", "Roboto", "Ubuntu", "sans-serif"]
+        for font_family in small_families:
+            self.small_font.setFamily(font_family)
+            if self.small_font.exactMatch() or font_family == "sans-serif":
+                break
+        self.small_font.setPointSize(9)
+        self.small_font.setWeight(QFont.Normal)
+        self.small_font.setStyleStrategy(QFont.PreferAntialias | QFont.PreferQuality)
+        
+        # Button font for better button typography
+        self.button_font = QFont()
+        button_families = ["Inter", "Segoe UI", "SF Pro Text", "Roboto Medium", "Ubuntu", "sans-serif"]
+        for font_family in button_families:
+            self.button_font.setFamily(font_family)
+            if self.button_font.exactMatch() or font_family == "sans-serif":
+                break
+        self.button_font.setPointSize(10)
+        self.button_font.setWeight(QFont.Medium)
+        self.button_font.setStyleStrategy(QFont.PreferAntialias | QFont.PreferQuality)
         
     def create_menus(self):
         """Create the application menu bar with icons"""
@@ -346,16 +446,16 @@ class MainWindow(QMainWindow):
 
     def local_item_selected(self, path, is_dir):
         """Handle file or directory selection in the local panel (only in local-to-server mode)."""
-        if self.current_mode != "local_to_server": #
+        if self.current_mode != "local_to_server": 
             # If not in local-to-server mode, this signal should ideally not be active or handled differently.
             # For now, we'll just return to prevent unintended behavior.
             return 
 
         # Extract the file/directory name from the path
-        name = os.path.basename(path) #
+        name = os.path.basename(path) 
         
         # Get the current path in the remote panel
-        remote_path = self.remote_panel.current_path #
+        remote_path = self.remote_panel.current_path 
         
         if not remote_path or not self.remote_panel.client:
             QMessageBox.warning(self, "No Remote Connection", 
@@ -363,31 +463,25 @@ class MainWindow(QMainWindow):
             return
         
         # Set up source and destination paths
-        source_full_path = path #
+        source_full_path = path 
+        destination_full_path = os.path.join(remote_path, name).replace('\\', '/')
         
+        # Ask for confirmation with the predetermined destination path
         if is_dir:
-            # If it's a directory, use the remote path as destination
-            destination_full_path = os.path.join(remote_path, name) #
-            
             # Confirm directory upload
             reply = QMessageBox.question(
                 self, "Upload Directory",
                 f"Upload directory '{name}' to '{destination_full_path}'?", 
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
-                
-            if reply != QMessageBox.Yes:
-                return
         else:
-            # If it's a file, ask where to upload
-            default_dest = os.path.join(remote_path, name) if remote_path else name
-            destination_full_path = QInputDialog.getText(
-                self, "Upload File", 
-                "Remote destination path:", 
-                QLineEdit.Normal, 
-                default_dest)[0]
-            
-            if not destination_full_path:
-                return
+            # Confirm file upload
+            reply = QMessageBox.question(
+                self, "Upload File",
+                f"Upload file '{name}' to '{destination_full_path}'?", 
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+                
+        if reply != QMessageBox.Yes:
+            return
         
         # Start the transfer using the signal bridge for thread-safe callbacks
         transfer_id = self.transfer_manager.upload_file(
@@ -399,61 +493,58 @@ class MainWindow(QMainWindow):
             # Track the upload with its destination path (for refresh)
             self.active_uploads[transfer_id] = destination_full_path 
 
-            self.status_bar.showMessage(f"Upload started: {name} → {destination_full_path}", 5000) #
+            self.status_bar.showMessage(f"Upload started: {name} → {destination_full_path}", 5000) 
             # Force immediate update of the transfer panel
-            self.transfer_panel.update_transfers() #
+            self.transfer_panel.update_transfers() 
         else:
-            QMessageBox.critical(self, "Upload Failed", "Failed to start upload.") #
+            QMessageBox.critical(self, "Upload Failed", "Failed to start upload.")
     
     def remote_item_selected(self, path, is_dir):
         """Handle file or directory selection in the remote panel (only in local-to-server mode)."""
-        if self.current_mode != "local_to_server": #
+        if self.current_mode != "local_to_server":
             # If not in local-to-server mode, this signal should ideally not be active or handled differently.
             # For now, we'll just return to prevent unintended behavior.
             return
 
         # Extract the file/directory name from the path
-        name = os.path.basename(path) #
+        name = os.path.basename(path)
         
         # Get the current path in the local panel
-        local_path = self.local_panel.current_path #
+        local_path = self.local_panel.current_path
         
         # Set up source and destination paths
-        source_full_path = path #
+        source_full_path = path
+        destination_full_path = os.path.join(local_path, name)
         
+        # Ask for confirmation with the predetermined destination path
         if is_dir:
-            # If it's a directory, ask for confirmation and use the local path as destination
-            destination_full_path = os.path.join(local_path, name) #
-            
             # Confirm directory download
             reply = QMessageBox.question(
                 self, "Download Directory",
                 f"Download directory '{name}' to '{destination_full_path}'?", 
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
-                
-            if reply != QMessageBox.Yes:
-                return
         else:
-            # If it's a file, ask where to download
-            default_dest = os.path.join(local_path, name) #
-            destination_full_path, _ = QFileDialog.getSaveFileName(
-                self, "Download File", default_dest)
-            
-            if not destination_full_path:
-                return
+            # Confirm file download
+            reply = QMessageBox.question(
+                self, "Download File",
+                f"Download file '{name}' to '{destination_full_path}'?", 
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+                
+        if reply != QMessageBox.Yes:
+            return
         
         # Start the transfer using the signal bridge for thread-safe callbacks
         transfer_id = self.transfer_manager.download_file(
                 source_full_path, destination_full_path, 
-                lambda tid, tr, tt: self.signal_bridge.update_progress(tid, tr, tt, TransferType.DOWNLOAD, None)) #
+                lambda tid, tr, tt: self.signal_bridge.update_progress(tid, tr, tt, TransferType.DOWNLOAD, None))
             
         if transfer_id:
             # Track the download with its destination path
-            self.active_downloads[transfer_id] = destination_full_path #
+            self.active_downloads[transfer_id] = destination_full_path
             
-            self.status_bar.showMessage(f"Download started: {name} → {destination_full_path}", 5000) #
+            self.status_bar.showMessage(f"Download started: {name} → {destination_full_path}", 5000)
             # Force immediate update of the transfer panel
-            self.transfer_panel.update_transfers() #
+            self.transfer_panel.update_transfers()
         else:
             QMessageBox.critical(self, "Download Failed", "Failed to start download.") #
     

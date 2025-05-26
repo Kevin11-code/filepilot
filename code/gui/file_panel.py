@@ -87,7 +87,7 @@ class FilePanel(QWidget):
 
         # File List View
         self.file_model = QStandardItemModel()
-        self.file_model.setHorizontalHeaderLabels(["Name", "Size", "Type", "Permissions", "Owner", "Group", "Modified"])
+        self.file_model.setHorizontalHeaderLabels(["Name", "Size", "Type", "Permissions", "Modified"])
 
         self.file_view = QTreeView()
         self.file_view.setModel(self.file_model)
@@ -107,9 +107,7 @@ class FilePanel(QWidget):
         self.file_view.header().setSectionResizeMode(1, QHeaderView.ResizeToContents) # Size
         self.file_view.header().setSectionResizeMode(2, QHeaderView.ResizeToContents) # Type
         self.file_view.header().setSectionResizeMode(3, QHeaderView.ResizeToContents) # Permissions
-        self.file_view.header().setSectionResizeMode(4, QHeaderView.ResizeToContents) # Owner
-        self.file_view.header().setSectionResizeMode(5, QHeaderView.ResizeToContents) # Group
-        self.file_view.header().setSectionResizeMode(6, QHeaderView.ResizeToContents) # Modified
+        self.file_view.header().setSectionResizeMode(4, QHeaderView.ResizeToContents) # Modified
 
         main_layout.addWidget(self.file_view)
         
@@ -160,7 +158,7 @@ class FilePanel(QWidget):
             QMessageBox.warning(self, "Connect Error", "Please select a connection.")
             return
 
-        config = self.auth_manager.get_connection(conn_name)
+        config = self.auth_manager.get_connection_secure(conn_name)
         if not config:
             QMessageBox.critical(self, "Connect Error", f"Connection '{conn_name}' not found.")
             return
@@ -174,6 +172,12 @@ class FilePanel(QWidget):
             connect_params.pop('name', None)
             connect_params.pop('has_password', None)
             connect_params.pop('has_passphrase', None)
+
+            # Handle SecureString objects - convert to plain strings for connection
+            if 'password' in connect_params and hasattr(connect_params['password'], 'get_value'):
+                connect_params['password'] = connect_params['password'].get_value()
+            if 'passphrase' in connect_params and hasattr(connect_params['passphrase'], 'get_value'):
+                connect_params['passphrase'] = connect_params['passphrase'].get_value()
 
             # Pass unpacked dictionary to connect method
             connected = new_client.connect(**connect_params)
@@ -211,7 +215,7 @@ class FilePanel(QWidget):
         try:
             if self.is_remote:
                 if not self.client:
-                    self.file_model.setHorizontalHeaderLabels(["Name", "Size", "Type", "Permissions", "Owner", "Group", "Modified"])
+                    self.file_model.setHorizontalHeaderLabels(["Name", "Size", "Type", "Permissions", "Modified"])
                     item = QStandardItem("Not Connected")
                     item.setFlags(item.flags() & ~Qt.ItemIsSelectable) # Make it non-selectable
                     self.file_model.appendRow(item)
@@ -261,9 +265,6 @@ class FilePanel(QWidget):
                         QStandardItem("" if stat.S_ISDIR(f.st_mode) else self.format_size(f.st_size)),
                         QStandardItem("Directory" if stat.S_ISDIR(f.st_mode) else "File"),
                         QStandardItem(self.format_permissions(f.st_mode)),
-                        # Use getattr to safely access owner_name and group_name
-                        QStandardItem(getattr(f, 'owner_name', None) or str(f.st_uid)), 
-                        QStandardItem(getattr(f, 'group_name', None) or str(f.st_gid)), 
                         QStandardItem(self.format_datetime(f.st_mtime))
                     ])
                 else: # Local file
@@ -282,8 +283,6 @@ class FilePanel(QWidget):
                         QStandardItem("" if f['is_dir'] else self.format_size(f['size'])),
                         QStandardItem("Directory" if f['is_dir'] else "File"),
                         QStandardItem(f['permissions']),
-                        QStandardItem(f['owner']),
-                        QStandardItem(f['group']),
                         QStandardItem(f['modified_time'])
                     ])
             self.path_edit.setText(path)
@@ -385,10 +384,19 @@ class FilePanel(QWidget):
             return
 
         menu = QMenu()
-        open_action = menu.addAction(self.style().standardIcon(QStyle.SP_DialogOpenButton), "Open")
-        upload_action = menu.addAction(self.style().standardIcon(QStyle.SP_ArrowUp), "Upload")
-        rename_action = menu.addAction(self.style().standardIcon(QStyle.SP_DialogResetButton), "Rename") 
-        delete_action = menu.addAction(self.style().standardIcon(QStyle.SP_TrashIcon), "Delete")
+        
+        # Add "Open" action only for local panels
+        if not self.is_remote:
+            open_action = menu.addAction("Open")
+        
+        # Show appropriate transfer action based on panel type
+        if self.is_remote:
+            transfer_action = menu.addAction("Download")  # Remote panel downloads files
+        else:
+            transfer_action = menu.addAction("Upload")    # Local panel uploads files
+            
+        rename_action = menu.addAction("Rename") 
+        delete_action = menu.addAction("Delete")
 
         action = menu.exec_(self.file_view.viewport().mapToGlobal(position))
 
@@ -396,7 +404,7 @@ class FilePanel(QWidget):
         full_path = index.data(Qt.UserRole)
         is_dir = index.data(Qt.UserRole + 1)
 
-        if action == open_action:
+        if not self.is_remote and action == open_action:
             if not is_dir:
                 self.open_file(full_path)
             else:
@@ -415,12 +423,20 @@ class FilePanel(QWidget):
                                   f"Are you sure you want to delete '{os.path.basename(full_path)}'? This cannot be undone.",
                                   QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
                 self.delete_item(full_path, is_dir)
-        elif action == upload_action:
+        elif action == transfer_action:
             if not is_dir:
-                if QMessageBox.question(self, "Confirm Upload",
-                                        f"Do you want to upload '{os.path.basename(full_path)}'?",
-                                        QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
-                    self.itemSelected.emit(full_path, False)
+                if self.is_remote:
+                    # Remote panel - confirm download
+                    if QMessageBox.question(self, "Confirm Download",
+                                            f"Do you want to download '{os.path.basename(full_path)}'?",
+                                            QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
+                        self.itemSelected.emit(full_path, False)
+                else:
+                    # Local panel - confirm upload
+                    if QMessageBox.question(self, "Confirm Upload",
+                                            f"Do you want to upload '{os.path.basename(full_path)}'?",
+                                            QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
+                        self.itemSelected.emit(full_path, False)
 
 
     def open_file(self, file_path):

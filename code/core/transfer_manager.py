@@ -500,14 +500,28 @@ class TransferManager:
             if client is None:
                 client = SFTPClient(logger=self.logger)
                 
-                # Connect based on transfer type
+                # Connect based on transfer type - handle SecureString passwords
                 if transfer.transfer_type == TransferType.UPLOAD:
-                    if not client.connect(**transfer.dest_config):
+                    config = transfer.dest_config.copy()
+                    # Convert SecureString to plain string for connection
+                    if 'password' in config and hasattr(config['password'], 'get_value'):
+                        config['password'] = config['password'].get_value()
+                    if 'passphrase' in config and hasattr(config['passphrase'], 'get_value'):
+                        config['passphrase'] = config['passphrase'].get_value()
+                    
+                    if not client.connect(**config):
                         transfer.status = TransferStatus.FAILED
                         transfer.error_message = "Failed to connect to destination server"
                         return
                 elif transfer.transfer_type == TransferType.DOWNLOAD:
-                    if not client.connect(**transfer.source_config):
+                    config = transfer.source_config.copy()
+                    # Convert SecureString to plain string for connection
+                    if 'password' in config and hasattr(config['password'], 'get_value'):
+                        config['password'] = config['password'].get_value()
+                    if 'passphrase' in config and hasattr(config['passphrase'], 'get_value'):
+                        config['passphrase'] = config['passphrase'].get_value()
+                    
+                    if not client.connect(**config):
                         transfer.status = TransferStatus.FAILED
                         transfer.error_message = "Failed to connect to source server"
                         return
@@ -575,10 +589,24 @@ class TransferManager:
                     transfer.error_message = "Download failed"
                     
             elif transfer.transfer_type == TransferType.SERVER_TO_SERVER:
-                # Server-to-server transfer
+                # Server-to-server transfer - handle SecureString passwords
+                source_config = transfer.source_config.copy()
+                dest_config = transfer.dest_config.copy()
+                
+                # Convert SecureString to plain string for connection
+                if 'password' in source_config and hasattr(source_config['password'], 'get_value'):
+                    source_config['password'] = source_config['password'].get_value()
+                if 'passphrase' in source_config and hasattr(source_config['passphrase'], 'get_value'):
+                    source_config['passphrase'] = source_config['passphrase'].get_value()
+                    
+                if 'password' in dest_config and hasattr(dest_config['password'], 'get_value'):
+                    dest_config['password'] = dest_config['password'].get_value()
+                if 'passphrase' in dest_config and hasattr(dest_config['passphrase'], 'get_value'):
+                    dest_config['passphrase'] = dest_config['passphrase'].get_value()
+                
                 result = client.server_to_server_transfer(
-                    transfer.source_config,
-                    transfer.dest_config,
+                    source_config,
+                    dest_config,
                     transfer.source_path,
                     transfer.dest_path,
                     chunks=transfer.chunks,

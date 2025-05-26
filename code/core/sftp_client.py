@@ -528,6 +528,7 @@ class SFTPClient:
                                   progress_callback: Callable[[float, float, float], None] = None) -> bool:
         """
         Transfer a file from one server to another via the local system as an intermediary.
+        Uses secure temporary file handling to prevent credential exposure.
         
         Args:
             source_config: Connection config for source server
@@ -541,71 +542,104 @@ class SFTPClient:
         Returns:
             bool: True if transfer successful, False otherwise
         """
-        if temp_path is None:
-            temp_path = os.path.join(os.path.dirname(__file__), "..", "temp", 
-                                     os.path.basename(source_path))
+        import tempfile
+        import os
         
-        # Ensure temp directory exists
-        os.makedirs(os.path.dirname(os.path.abspath(temp_path)), exist_ok=True)
+        # Create secure temporary file
+        temp_dir = os.path.join(os.path.dirname(__file__), "..", "temp")
+        os.makedirs(temp_dir, exist_ok=True)
+        
+        if temp_path is None:
+            # Create a secure temporary file with restricted permissions
+            temp_fd, temp_path = tempfile.mkstemp(
+                prefix="filepilot_s2s_",
+                suffix=f"_{os.path.basename(source_path)}",
+                dir=temp_dir
+            )
+            # Set restrictive permissions (owner read/write only)
+            os.chmod(temp_path, 0o600)
+            os.close(temp_fd)  # Close the file descriptor, we'll open it properly later
         
         self.logger.info(f"Starting server-to-server transfer: {source_path} -> {dest_path}")
+        self.logger.info(f"Using secure temporary file: {temp_path}")
         
-        # Connect to source server and download
-        source_client = SFTPClient(logger=self.logger)
-        # Create a copy of the config and remove the 'name' and 'has_password' keys
-        source_connect_params = source_config.copy()
-        source_connect_params.pop('name', None)
-        source_connect_params.pop('has_password', None)
-        source_connect_params.pop('has_passphrase', None) # Also remove has_passphrase
-        
-        if not source_client.connect(**source_connect_params):
-            self.logger.error("Failed to connect to source server")
-            return False
+        try:
+            # Connect to source server and download
+            source_client = SFTPClient(logger=self.logger)
+            # Create a copy of the config and remove the 'name' and 'has_password' keys
+            source_connect_params = source_config.copy()
+            source_connect_params.pop('name', None)
+            source_connect_params.pop('has_password', None)
+            source_connect_params.pop('has_passphrase', None) # Also remove has_passphrase
             
-        self.logger.info(f"Downloading from source server to temp location: {temp_path}")
-        download_result = source_client.download_file(
-            source_path, temp_path, chunks, 
-            lambda bytes_t, total, percent: progress_callback(bytes_t, total, percent/2) if progress_callback else None
-        )
-        source_client.disconnect()
-        
-        if not download_result:
-            self.logger.error("Failed to download from source server")
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
-            return False
+            if not source_client.connect(**source_connect_params):
+                self.logger.error("Failed to connect to source server")
+                return False
                 
-        # Connect to destination server and upload
-        dest_client = SFTPClient(logger=self.logger)
-        # Create a copy of the config and remove the 'name' and 'has_password' keys
-        dest_connect_params = dest_config.copy()
-        dest_connect_params.pop('name', None)
-        dest_connect_params.pop('has_password', None)
-        dest_connect_params.pop('has_passphrase', None) # Also remove has_passphrase
+            self.logger.info(f"Downloading from source server to secure temp location: {temp_path}")
+            download_result = source_client.download_file(
+                source_path, temp_path, chunks, 
+                lambda bytes_t, total, percent: progress_callback(bytes_t, total, percent/2) if progress_callback else None
+            )
+            source_client.disconnect()
+            
+            if not download_result:
+                self.logger.error("Failed to download from source server")
+                return False
+                    
+            # Connect to destination server and upload
+            dest_client = SFTPClient(logger=self.logger)
+            # Create a copy of the config and remove the 'name' and 'has_password' keys
+            dest_connect_params = dest_config.copy()
+            dest_connect_params.pop('name', None)
+            dest_connect_params.pop('has_password', None)
+            dest_connect_params.pop('has_passphrase', None) # Also remove has_passphrase
 
-        if not dest_client.connect(**dest_connect_params):
-            self.logger.error("Failed to connect to destination server")
+            if not dest_client.connect(**dest_connect_params):
+                self.logger.error("Failed to connect to destination server")
+                return False
+                
+            self.logger.info(f"Uploading from secure temp location to destination server: {dest_path}")
+            upload_result = dest_client.upload_file(
+                temp_path, dest_path, chunks,
+                lambda bytes_t, total, percent: progress_callback(bytes_t, total, 50 + percent/2) if progress_callback else None
+            )
+            dest_client.disconnect()
+            
+            if upload_result:
+                self.logger.info(f"Server-to-server transfer completed successfully")
+                return True
+            else:
+                self.logger.error("Failed to upload to destination server")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"Server-to-server transfer failed: {str(e)}")
+            return False
+        finally:
+            # Secure cleanup of temporary file
             if os.path.exists(temp_path):
-                os.remove(temp_path)
-            return False
-            
-        self.logger.info(f"Uploading from temp location to destination server: {dest_path}")
-        upload_result = dest_client.upload_file(
-            temp_path, dest_path, chunks,
-            lambda bytes_t, total, percent: progress_callback(bytes_t, total, 50 + percent/2) if progress_callback else None
-        )
-        dest_client.disconnect()
-        
-        # Clean up
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-            
-        if upload_result:
-            self.logger.info(f"Server-to-server transfer completed successfully")
-            return True
-        else:
-            self.logger.error("Failed to upload to destination server")
-            return False
+                try:
+                    # Overwrite the file with random data before deletion
+                    file_size = os.path.getsize(temp_path)
+                    with open(temp_path, 'r+b') as f:
+                        # Overwrite with random data multiple times
+                        for _ in range(3):
+                            f.seek(0)
+                            f.write(os.urandom(file_size))
+                            f.flush()
+                            os.fsync(f.fileno())  # Force write to disk
+                    
+                    # Remove the file
+                    os.remove(temp_path)
+                    self.logger.info("Secure cleanup of temporary file completed")
+                except Exception as cleanup_err:
+                    self.logger.warning(f"Failed to securely clean up temporary file: {cleanup_err}")
+                    # Still try to remove the file normally
+                    try:
+                        os.remove(temp_path)
+                    except:
+                        pass
 
     def list_directory(self, remote_path: str = '.') -> list:
         """
