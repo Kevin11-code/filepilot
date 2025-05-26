@@ -5,6 +5,7 @@ import argparse
 import getpass
 from typing import Dict, List, Optional
 import json
+import stat
 
 from ..core.sftp_client import SFTPClient
 from ..core.auth_manager import AuthManager
@@ -76,13 +77,15 @@ class CLIHandler:
         self._add_connection_args(download_parser)
         
         # Server to server command
-        s2s_parser = subparsers.add_parser('s2s', help='Server to server transfer')
-        s2s_parser.add_argument('source_path', help='Source path on first server')
-        s2s_parser.add_argument('dest_path', help='Destination path on second server')
-        s2s_parser.add_argument('--source-connection', type=str,
-                              help='Use a saved connection for source server')
-        s2s_parser.add_argument('--dest-connection', type=str,
-                              help='Use a saved connection for destination server')
+        s2s_parser = subparsers.add_parser('s2s', help='Server-to-server file transfer')
+        s2s_parser.add_argument('source_path', help='Source file path')
+        s2s_parser.add_argument('dest_path', help='Destination file path')
+        s2s_parser.add_argument('--source-host', required=True, help='Source server hostname or IP')
+        s2s_parser.add_argument('--source-username', required=True, help='Source server username')
+        s2s_parser.add_argument('--source-password', required=True, help='Source server password')
+        s2s_parser.add_argument('--dest-host', required=True, help='Destination server hostname or IP')
+        s2s_parser.add_argument('--dest-username', required=True, help='Destination server username')
+        s2s_parser.add_argument('--dest-password', required=True, help='Destination server password')
         self._add_connection_args(s2s_parser, prefix='source_')
         self._add_connection_args(s2s_parser, prefix='dest_')
         
@@ -407,7 +410,11 @@ class CLIHandler:
                 print("{:<40} {:<12} {:<6} {:<20}".format("Name", "Size", "Type", "Modified"))
                 print("-" * 80)
                 
-                for name, size, ftype, modified in files:
+                for attr in files:
+                    name = attr.filename
+                    size = attr.st_size
+                    ftype = 'dir' if stat.S_ISDIR(attr.st_mode) else 'file'
+                    modified = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(attr.st_mtime))
                     if ftype == 'dir':
                         size_str = "<DIR>"
                     else:
@@ -419,7 +426,6 @@ class CLIHandler:
                             size_str = f"{size/(1024*1024):.1f} MB"
                         else:
                             size_str = f"{size/(1024*1024*1024):.2f} GB"
-                    
                     print("{:<40} {:<12} {:<6} {:<20}".format(
                         name, size_str, ftype, modified))
         except Exception as e:
