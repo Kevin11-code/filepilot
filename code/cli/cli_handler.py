@@ -75,6 +75,12 @@ class CLIHandler:
         download_parser.add_argument('remote_path', help='Remote file or directory to download')
         download_parser.add_argument('local_path', help='Local destination path')
         self._add_connection_args(download_parser)
+
+        # Rename command
+        rename_parser = subparsers.add_parser('rename', help='Rename a file or directory on the server')
+        rename_parser.add_argument('old_path', help='Current path of the file/directory')
+        rename_parser.add_argument('new_path', help='New path/name for the file/directory')
+        self._add_connection_args(rename_parser)
         
         # Server to server command
         s2s_parser = subparsers.add_parser('s2s', help='Server-to-server file transfer')
@@ -256,6 +262,8 @@ class CLIHandler:
             self._handle_upload(args)
         elif args.command == 'download':
             self._handle_download(args)
+        elif args.command == 'rename':
+            self._handle_rename(args)
         elif args.command == 's2s':
             self._handle_server_to_server(args)
         elif args.command == 'list':
@@ -353,6 +361,20 @@ class CLIHandler:
             
         # Disconnect
         client.disconnect()
+
+    def _handle_rename(self, args):
+        config = self._get_connection_config(args)
+        client = SFTPClient(logger=self.logger)
+        self.logger.info(f"Connecting to {config['host']}:{config['port']} as {config['username']}")
+        if not client.connect(**config):
+            self.logger.error("Connection failed")
+            sys.exit(1)
+        result = client.rename(args.old_path, args.new_path)
+        client.disconnect()
+        if result:
+            print(f"Renamed '{args.old_path}' to '{args.new_path}' successfully.")
+        else:
+            print(f"Failed to rename '{args.old_path}'.")
     
     def _handle_server_to_server(self, args):
         """Handle server to server transfer command."""
