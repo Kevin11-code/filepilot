@@ -39,7 +39,7 @@ Thumbs.db
 200kb.txt
 
 # Local configuration
-config/connections.json
+code/config/connections.json
 
 # Environment installation scripts - if they contain secrets
 # Uncomment if needed
