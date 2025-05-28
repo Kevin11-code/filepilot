@@ -16,6 +16,9 @@ import shutil # Import shutil for recursive local directory deletion
 from code.core.auth_manager import AuthManager
 from code.core.sftp_client import SFTPClient
 from code.utils.file_utils import FileIconProvider
+from code.utils.secure_string import SecureTemporaryCredentials
+import secrets
+import gc
 
 class FilePanel(QWidget):
     itemSelected = pyqtSignal(str, bool) # path, is_directory
@@ -146,7 +149,7 @@ class FilePanel(QWidget):
             self.connect_to_server()
 
     def connect_to_server(self):
-        """Connects to the selected SFTP server."""
+        """Connects to the selected SFTP server with secure credential handling."""
         if not self.is_remote:
             return
 
@@ -161,23 +164,20 @@ class FilePanel(QWidget):
             return
         
         try:
-            # Initialize SFTPClient without config, as its __init__ does not take it
-            new_client = SFTPClient() 
+            new_client = SFTPClient()
             
-            # Create a copy of the config and remove internal keys not used by connect
+            # Prepare connection parameters
             connect_params = config.copy()
             connect_params.pop('name', None)
             connect_params.pop('has_password', None)
             connect_params.pop('has_passphrase', None)
 
-            # Handle SecureString objects - convert to plain strings for connection
-            if 'password' in connect_params and hasattr(connect_params['password'], 'get_value'):
-                connect_params['password'] = connect_params['password'].get_value()
-            if 'passphrase' in connect_params and hasattr(connect_params['passphrase'], 'get_value'):
-                connect_params['passphrase'] = connect_params['passphrase'].get_value()
-
-            # Pass unpacked dictionary to connect method
-            connected = new_client.connect(**connect_params)
+            # Use secure context manager for credential extraction
+            # Credentials are automatically cleared when exiting context
+            with SecureTemporaryCredentials(connect_params) as temp_params:
+                connected = new_client.connect(**temp_params)
+            
+            # At this point, all plain text credentials have been securely cleared
             
             if connected:
                 self.set_client(new_client)
@@ -189,10 +189,14 @@ class FilePanel(QWidget):
                 QMessageBox.information(self, "Connected", f"Successfully connected to {conn_name}.")
             else:
                 QMessageBox.critical(self, "Connection Failed", "SFTPClient.connect() returned False.")
-                self.set_client(None) # Ensure client is None on failure
+                self.set_client(None)
+                
         except Exception as e:
             QMessageBox.critical(self, "Connection Failed", f"Failed to connect: {e}")
-            self.set_client(None) # Ensure client is None on failure
+            self.set_client(None)
+        finally:
+            # Force garbage collection to clear any lingering references
+            gc.collect()
 
     def disconnect_from_server(self):
         """Disconnects from the current SFTP server."""

@@ -147,7 +147,10 @@ class ConnectionDialog(QDialog):
                 if 'passphrase' in connection:
                     passphrase = connection['passphrase']
                     if hasattr(passphrase, 'get_value'):
-                        self.passphrase_edit.setText(passphrase.get_value())
+                        # Use secure temporary credentials for GUI display
+                        from utils.secure_string import SecureTemporaryCredentials
+                        with SecureTemporaryCredentials({'passphrase': passphrase}) as temp_creds:
+                            self.passphrase_edit.setText(temp_creds.get('passphrase', ''))
                     else:
                         self.passphrase_edit.setText(str(passphrase))
             else:
@@ -156,7 +159,10 @@ class ConnectionDialog(QDialog):
                 if 'password' in connection:
                     password = connection['password']
                     if hasattr(password, 'get_value'):
-                        self.password_edit.setText(password.get_value())
+                        # Use secure temporary credentials for GUI display
+                        from utils.secure_string import SecureTemporaryCredentials
+                        with SecureTemporaryCredentials({'password': password}) as temp_creds:
+                            self.password_edit.setText(temp_creds.get('password', ''))
                     else:
                         self.password_edit.setText(str(password))
     

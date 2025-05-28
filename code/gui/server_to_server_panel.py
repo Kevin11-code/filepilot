@@ -2,12 +2,15 @@ from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButt
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 from PyQt5.QtGui import QIcon
 import posixpath
+import gc
+import secrets
 
 import os
 from code.gui.file_panel import FilePanel
 from code.core.auth_manager import AuthManager
 from code.core.sftp_client import SFTPClient
 from code.core.transfer_manager import TransferManager, TransferType
+from code.utils.secure_string import SecureTemporaryCredentials
 
 class ServerToServerPanel(QWidget):
     """
@@ -134,31 +137,32 @@ class ServerToServerPanel(QWidget):
             QMessageBox.critical(self, "Configuration Error", "Could not retrieve connection details for transfer.")
             return
 
-        # Handle SecureString objects in configs - convert to plain strings for transfer
-        for config in [source_config, dest_config]:
-            if 'password' in config and hasattr(config['password'], 'get_value'):
-                config['password'] = config['password'].get_value()
-            if 'passphrase' in config and hasattr(config['passphrase'], 'get_value'):
-                config['passphrase'] = config['passphrase'].get_value()
+        # Queue the server-to-server transfer with secure credential handling
+        # The transfer manager will handle secure credential extraction internally
+        try:
+            transfer_id = self.transfer_manager.queue_server_to_server(
+                source_full_path,
+                dest_full_path,
+                source_config,
+                dest_config,
+                # Pass lambda with TransferType.SERVER_TO_SERVER and the destination panel reference
+                progress_callback=lambda tid, tr, tt: self.signal_bridge.update_progress(
+                    tid, tr, tt, TransferType.SERVER_TO_SERVER, self.destination_panel)
+            )
 
-        # Queue the server-to-server transfer
-        transfer_id = self.transfer_manager.queue_server_to_server(
-            source_full_path,
-            dest_full_path,
-            source_config,
-            dest_config,
-            # Pass lambda with TransferType.SERVER_TO_SERVER and the destination panel reference
-            progress_callback=lambda tid, tr, tt: self.signal_bridge.update_progress(
-                tid, tr, tt, TransferType.SERVER_TO_SERVER, self.destination_panel)
-        )
-
-        if transfer_id:
-            QMessageBox.information(self, "Transfer Started", f"Server-to-server transfer started with ID: {transfer_id}")
-            # Force immediate update of the transfer panel in MainWindow
-            if hasattr(self.parent(), 'transfer_panel'):
-                self.parent().transfer_panel.update_transfers()
-        else:
-            QMessageBox.critical(self, "Transfer Failed", "Failed to start server-to-server transfer.")
+            if transfer_id:
+                QMessageBox.information(self, "Transfer Started", f"Server-to-server transfer started with ID: {transfer_id}")
+                # Force immediate update of the transfer panel in MainWindow
+                if hasattr(self.parent(), 'transfer_panel'):
+                    self.parent().transfer_panel.update_transfers()
+            else:
+                QMessageBox.critical(self, "Transfer Failed", "Failed to start server-to-server transfer.")
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Transfer Failed", f"Failed to start transfer: {e}")
+        finally:
+            # Force garbage collection to clear any lingering credential references
+            gc.collect()
 
     def dest_item_selected(self, path, is_dir):
         """

@@ -128,20 +128,39 @@ class AuthManager:
             
             # Handle sensitive data based on storage method
             if use_keyring:
-                # Store in system keyring
+                # Store in system keyring using secure credentials
+                temp_creds = {}
                 if secure_password and not secure_password.is_cleared():
-                    keyring.set_password('filepilot', f'{name}_password', secure_password.get_value())
+                    temp_creds['password'] = secure_password
                     connection['has_password'] = True
-                    
                 if secure_passphrase and not secure_passphrase.is_cleared():
-                    keyring.set_password('filepilot', f'{name}_passphrase', secure_passphrase.get_value())
+                    temp_creds['passphrase'] = secure_passphrase
                     connection['has_passphrase'] = True
+                
+                # Use secure context manager for keyring storage
+                if temp_creds:
+                    from utils.secure_string import SecureTemporaryCredentials
+                    with SecureTemporaryCredentials(temp_creds) as plain_creds:
+                        if 'password' in plain_creds:
+                            keyring.set_password('filepilot', f'{name}_password', plain_creds['password'])
+                        if 'passphrase' in plain_creds:
+                            keyring.set_password('filepilot', f'{name}_passphrase', plain_creds['passphrase'])
             else:
-                # Store in config (potentially encrypted)
+                # Store in config (potentially encrypted) using secure credentials
+                temp_creds = {}
                 if secure_password and not secure_password.is_cleared():
-                    connection['password'] = secure_password.get_value()
+                    temp_creds['password'] = secure_password
                 if secure_passphrase and not secure_passphrase.is_cleared():
-                    connection['passphrase'] = secure_passphrase.get_value()
+                    temp_creds['passphrase'] = secure_passphrase
+                
+                # Use secure context manager for config storage
+                if temp_creds:
+                    from utils.secure_string import SecureTemporaryCredentials
+                    with SecureTemporaryCredentials(temp_creds) as plain_creds:
+                        if 'password' in plain_creds:
+                            connection['password'] = plain_creds['password']
+                        if 'passphrase' in plain_creds:
+                            connection['passphrase'] = plain_creds['passphrase']
             
             # Clear sensitive data from SecureString objects
             if secure_password:

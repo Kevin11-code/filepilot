@@ -10,7 +10,72 @@ import secrets
 import array
 import gc
 import weakref
-from typing import Optional
+from typing import Optional, Dict, Any
+
+
+class SecureTemporaryCredentials:
+    """
+    Context manager for temporarily extracting credentials with automatic cleanup.
+    
+    This class safely extracts plain text credentials from SecureString objects
+    for the minimum time necessary, then immediately overwrites and clears them
+    from memory to prevent exposure in memory dumps.
+    """
+    
+    def __init__(self, secure_dict: Dict[str, Any]):
+        """
+        Initialize with a dictionary containing SecureString objects.
+        
+        Args:
+            secure_dict: Dict containing SecureString objects for 'password' and/or 'passphrase'
+        """
+        self.secure_dict = secure_dict
+        self.plain_dict = {}
+        self.cleanup_vars = []
+        self._original_values = {}
+    
+    def __enter__(self) -> Dict[str, Any]:
+        """Extract plain text credentials temporarily."""
+        self.plain_dict = self.secure_dict.copy()
+        
+        # Extract password if present
+        if 'password' in self.plain_dict and hasattr(self.plain_dict['password'], 'get_value'):
+            self._original_values['password'] = self.plain_dict['password']
+            plain_password = self.plain_dict['password'].get_value()
+            self.plain_dict['password'] = plain_password
+            self.cleanup_vars.append('password')
+        
+        # Extract passphrase if present  
+        if 'passphrase' in self.plain_dict and hasattr(self.plain_dict['passphrase'], 'get_value'):
+            self._original_values['passphrase'] = self.plain_dict['passphrase']
+            plain_passphrase = self.plain_dict['passphrase'].get_value()
+            self.plain_dict['passphrase'] = plain_passphrase
+            self.cleanup_vars.append('passphrase')
+        
+        return self.plain_dict
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Securely clear all plain text credentials."""
+        # Overwrite sensitive data with random values
+        for key in self.cleanup_vars:
+            if key in self.plain_dict:
+                # Overwrite with random data multiple times
+                for _ in range(3):
+                    random_data = secrets.token_urlsafe(64)
+                    self.plain_dict[key] = random_data
+                    del random_data
+                
+                # Set to None and delete
+                self.plain_dict[key] = None
+                del self.plain_dict[key]
+        
+        # Clear the entire dict
+        self.plain_dict.clear()
+        self.cleanup_vars.clear()
+        self._original_values.clear()
+        
+        # Force garbage collection to clear any remaining references
+        gc.collect()
 
 
 class SecureString:

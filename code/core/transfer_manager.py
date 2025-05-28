@@ -2,10 +2,13 @@ import os
 import time
 import logging
 import threading
+import gc
+import secrets
 from typing import Dict, List, Callable, Optional, Tuple
 from enum import Enum
 from queue import Queue, PriorityQueue
 from .sftp_client import SFTPClient
+from ..utils.secure_string import SecureTemporaryCredentials
 
 class TransferType(Enum):
     """Enum for different transfer types."""
@@ -500,31 +503,26 @@ class TransferManager:
             if client is None:
                 client = SFTPClient(logger=self.logger)
                 
-                # Connect based on transfer type - handle SecureString passwords
+                # Connect based on transfer type - use secure credential handling
                 if transfer.transfer_type == TransferType.UPLOAD:
                     config = transfer.dest_config.copy()
-                    # Convert SecureString to plain string for connection
-                    if 'password' in config and hasattr(config['password'], 'get_value'):
-                        config['password'] = config['password'].get_value()
-                    if 'passphrase' in config and hasattr(config['passphrase'], 'get_value'):
-                        config['passphrase'] = config['passphrase'].get_value()
                     
-                    if not client.connect(**config):
-                        transfer.status = TransferStatus.FAILED
-                        transfer.error_message = "Failed to connect to destination server"
-                        return
+                    # Use secure context manager for credential extraction
+                    with SecureTemporaryCredentials(config) as temp_params:
+                        if not client.connect(**temp_params):
+                            transfer.status = TransferStatus.FAILED
+                            transfer.error_message = "Failed to connect to destination server"
+                            return
+                    
                 elif transfer.transfer_type == TransferType.DOWNLOAD:
                     config = transfer.source_config.copy()
-                    # Convert SecureString to plain string for connection
-                    if 'password' in config and hasattr(config['password'], 'get_value'):
-                        config['password'] = config['password'].get_value()
-                    if 'passphrase' in config and hasattr(config['passphrase'], 'get_value'):
-                        config['passphrase'] = config['passphrase'].get_value()
                     
-                    if not client.connect(**config):
-                        transfer.status = TransferStatus.FAILED
-                        transfer.error_message = "Failed to connect to source server"
-                        return
+                    # Use secure context manager for credential extraction
+                    with SecureTemporaryCredentials(config) as temp_params:
+                        if not client.connect(**temp_params):
+                            transfer.status = TransferStatus.FAILED
+                            transfer.error_message = "Failed to connect to source server"
+                            return
             
             # Progress callback wrapper for SFTPClient
             # This wrapper translates SFTPClient's progress args to TransferManager's expected args
@@ -589,29 +587,22 @@ class TransferManager:
                     transfer.error_message = "Download failed"
                     
             elif transfer.transfer_type == TransferType.SERVER_TO_SERVER:
-                # Server-to-server transfer - handle SecureString passwords
+                # Server-to-server transfer - use secure credential handling
                 source_config = transfer.source_config.copy()
                 dest_config = transfer.dest_config.copy()
                 
-                # Convert SecureString to plain string for connection
-                if 'password' in source_config and hasattr(source_config['password'], 'get_value'):
-                    source_config['password'] = source_config['password'].get_value()
-                if 'passphrase' in source_config and hasattr(source_config['passphrase'], 'get_value'):
-                    source_config['passphrase'] = source_config['passphrase'].get_value()
-                    
-                if 'password' in dest_config and hasattr(dest_config['password'], 'get_value'):
-                    dest_config['password'] = dest_config['password'].get_value()
-                if 'passphrase' in dest_config and hasattr(dest_config['passphrase'], 'get_value'):
-                    dest_config['passphrase'] = dest_config['passphrase'].get_value()
-                
-                result = client.server_to_server_transfer(
-                    source_config,
-                    dest_config,
-                    transfer.source_path,
-                    transfer.dest_path,
-                    chunks=transfer.chunks,
-                    progress_callback=sftp_progress_wrapper # Pass our wrapper
-                )
+                # Use secure context managers for both credential sets
+                # No plain text credentials remain in memory after this block
+                with SecureTemporaryCredentials(source_config) as source_temp_params:
+                    with SecureTemporaryCredentials(dest_config) as dest_temp_params:
+                        result = client.server_to_server_transfer(
+                            source_temp_params,
+                            dest_temp_params,
+                            transfer.source_path,
+                            transfer.dest_path,
+                            chunks=transfer.chunks,
+                            progress_callback=sftp_progress_wrapper
+                        )
                 
                 if result:
                     transfer.status = TransferStatus.COMPLETED
@@ -631,6 +622,9 @@ class TransferManager:
         finally:
             # Record end time and cleanup
             transfer.end_time = time.time()
+            
+            # Force garbage collection to clear any lingering credential references
+            gc.collect()
             
             # Move from active to history
             with self.lock:
