@@ -17,6 +17,7 @@ from code.core.sftp_client import SFTPClient
 
 class FilePanel(QWidget):
     itemSelected = pyqtSignal(str, bool) # path, is_directory
+    uploadCompleted = pyqtSignal(str)    # Add this line
     
     def __init__(self, parent=None, is_remote=False):
         super().__init__(parent)
@@ -400,7 +401,29 @@ class FilePanel(QWidget):
                 if QMessageBox.question(self, "Confirm Upload",
                                         f"Do you want to upload '{os.path.basename(full_path)}'?",
                                         QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
-                    self.itemSelected.emit(full_path, False)
+                    self.upload_item(full_path)
+
+    def upload_item(self, path):
+        """Handles the upload of a file."""
+        try:
+            if not os.path.exists(path):
+                QMessageBox.warning(self, "Upload Error", f"File not found: {path}")
+                return
+
+            if self.is_remote and not self.client:
+                QMessageBox.warning(self, "Upload Error", "Not connected to remote server.")
+                return
+
+            self.itemSelected.emit(path, False)
+
+            # Emit uploadCompleted signal after upload (simulate delay if needed)
+            QTimer.singleShot(1000, lambda: self.uploadCompleted.emit(self.current_path))
+
+            # Optionally, still refresh this panel
+            QTimer.singleShot(1000, self.refresh)
+
+        except Exception as e:
+            QMessageBox.critical(self, "Upload Error", f"Failed to upload '{os.path.basename(path)}': {e}")
 
 
     def open_file(self, file_path):

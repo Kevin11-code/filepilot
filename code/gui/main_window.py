@@ -71,9 +71,9 @@ class MainWindow(QMainWindow):
             transfer_manager=self.transfer_manager,
             signal_bridge=self.signal_bridge
         )
-
+        self.local_panel.uploadCompleted.connect(self.remote_panel.refresh)
         self.current_mode = "local_to_server" # Initial mode
-
+        
         self.setup_ui()
         self.setup_logger()
         

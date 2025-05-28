@@ -24,6 +24,7 @@ class TransferPanel(QWidget):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_transfers)
         self.timer.start(1000)  # Update every second
+        self.last_logged_status = {}  # Track last status to avoid duplicate logs
     
     def setup_ui(self):
         """Set up the transfer panel UI"""
@@ -150,14 +151,40 @@ class TransferPanel(QWidget):
             elif 'PAUSED' in transfer['status']:
                 self._set_row_background(table, row, Qt.yellow, 0.2)
             
-            log_msg = (
-                f"ID: {transfer['id']} | Type: {transfer['type']} | "
-                f"Source: {transfer['source']} | Destination: {transfer['destination']} | "
-                f"Status: {transfer['status']} | Progress: {transfer['progress']} | "
-                f"Speed: {transfer['rate']} | Size: {transfer['transferred']} / {transfer['total']}"
-            )
-            logging.info(log_msg)
+            transfer_id = transfer['id']
+            current_status = transfer['status']
+            last_status = self.last_logged_status.get(transfer_id)
+
+            if current_status != last_status:
+                if current_status == 'COMPLETED':
+                    transferred_str = self.safe_format_size(transfer['transferred'])
+                    total_str = self.safe_format_size(transfer['total'])
+                    log_msg = (
+                        f"ID: {transfer['id']} | Type: {transfer['type']} | "
+                        f"Source: {transfer['source']} | Destination: {transfer['destination']} | "
+                        f"Status: {transfer['status']} | Progress: {transfer['progress']} | "
+                        f"Speed: {transfer['rate']} | Size: {transferred_str} / {total_str}"
+                    )
+                    logging.info(log_msg)
+                self.last_logged_status[transfer_id] = current_status
     
+    def format_size(num_bytes):
+        """Convert bytes to a human-readable string."""
+        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+            if num_bytes < 1024.0:
+                return f"{num_bytes:.2f} {unit}"
+            num_bytes /= 1024.0
+        return f"{num_bytes:.2f} PB"
+
+    def safe_format_size(self, value):
+        # If value is already a string with units, return as is
+        if isinstance(value, str) and any(unit in value for unit in ['B', 'KB', 'MB', 'GB', 'TB', 'PB']):
+            return value
+        try:
+            return self.format_size(float(value))
+        except Exception:
+            return str(value)
+
     def _set_row_background(self, table, row, color, alpha=0.1):
         """Set background color for a row"""
         for col in range(table.columnCount()):
