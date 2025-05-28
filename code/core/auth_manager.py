@@ -3,6 +3,7 @@ import json
 import base64
 import getpass
 import keyring
+import secrets
 from typing import Dict, Optional, Union, Any
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
@@ -56,10 +57,12 @@ class AuthManager:
             # Use getpass for hidden input
             password_value = getpass.getpass(prompt)
             
-            # Create SecureString using the credential manager
+            # Immediately create SecureString using the credential manager
             secure_password = self._credential_manager.create_secure_string(password_value)
             
-            # Clear the original variable
+            # Immediately clear the original variable by overwriting with random data
+            for _ in range(3):
+                password_value = secrets.token_urlsafe(64)
             password_value = None
             del password_value
             

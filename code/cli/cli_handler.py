@@ -358,7 +358,7 @@ class CLIHandler:
                 passphrase_value = None
                 del passphrase_value
         else:
-            # Password-based authentication - wrap in SecureString
+            # Password-based authentication - wrap in SecureString immediately
             password = getattr(args, f'{prefix}password', None)
             password_stdin = getattr(args, f'{prefix}password_stdin', False)
             password_env = getattr(args, f'{prefix}password_env', None)
@@ -371,11 +371,12 @@ class CLIHandler:
                 password = None
                 del password
             elif password_stdin:
+                # Secure password input - immediately wrap in SecureString
                 password_value = getpass.getpass('SFTP password: ')
                 secure_password = SecureString(password_value)
                 config['password'] = secure_password
                 self._active_credentials.append(secure_password)
-                # Clear the local variable
+                # Clear the original variable
                 password_value = None
                 del password_value
             elif password_env:
@@ -386,16 +387,16 @@ class CLIHandler:
                 secure_password = SecureString(password_value)
                 config['password'] = secure_password
                 self._active_credentials.append(secure_password)
-                # Clear the local variable
+                # Clear the original variable
                 password_value = None
                 del password_value
             else:
-                # If no password method specified, prompt
+                # If no password method specified, prompt - secure input
                 password_value = getpass.getpass('SFTP password: ')
                 secure_password = SecureString(password_value)
                 config['password'] = secure_password
                 self._active_credentials.append(secure_password)
-                # Clear the local variable
+                # Clear the original variable
                 password_value = None
                 del password_value
                 
