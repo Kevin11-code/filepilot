@@ -230,7 +230,8 @@ class SFTPClient:
                     local_path: str, 
                     remote_path: str, 
                     chunks: int = 10, 
-                    progress_callback: Callable[[float, float, float], None] = None) -> bool:
+                    progress_callback: Callable[[float, float, float], None] = None,
+                    overwrite_callback: Callable[[str], bool] = None) -> bool:
         """
         Upload a file to the SFTP server with chunking and progress reporting.
         
@@ -240,6 +241,8 @@ class SFTPClient:
             chunks: Number of chunks to split the file into
             progress_callback: Optional callback function for progress updates:
                                func(bytes_transferred, total_bytes, percentage)
+            overwrite_callback: Optional callback function to ask user about overwriting:
+                               func(remote_path) -> bool (True to overwrite, False to cancel)
         
         Returns:
             bool: True if upload successful, False otherwise
@@ -277,7 +280,24 @@ class SFTPClient:
             except Exception as e:
                 self.logger.warning(f"Error checking remote path type: {str(e)}")
             
-            # Check if remote directory exists, and create it if it doesn't
+            # Check if remote file already exists and ask for overwrite confirmation
+            try:
+                existing_stat = self.sftp.stat(remote_path)
+                # File exists, check if we should overwrite
+                if overwrite_callback:
+                    if not overwrite_callback(remote_path):
+                        self.logger.info(f"Upload canceled by user: {remote_path}")
+                        return False
+                else:
+                    self.logger.warning(f"Remote file exists but no overwrite callback provided: {remote_path}")
+                    # Continue with upload if no callback is provided (backward compatibility)
+            except FileNotFoundError:
+                # File doesn't exist, safe to upload
+                pass
+            except Exception as e:
+                self.logger.warning(f"Error checking if remote file exists: {str(e)}")
+            
+            # Check if remote directory exists, and create it if it doesn't exist
             remote_dir = os.path.dirname(remote_path)
             if remote_dir:
                 try:
@@ -296,11 +316,13 @@ class SFTPClient:
                         return False
             
             file_size = os.path.getsize(local_path)
-            # chunk_size = max(file_size // chunks, 1024)  # Ensure minimum chunk size
-            chunk_size = 64 * 1024  
+            # Use adaptive chunk size based on file size, but ensure it's reasonable
+            min_chunk_size = 64 * 1024  # 64KB minimum
+            max_chunk_size = 1024 * 1024  # 1MB maximum
+            chunk_size = max(min_chunk_size, min(file_size // chunks, max_chunk_size))
             
             self.logger.info(f"Starting upload: '{local_path}' -> '{remote_path}'")
-            self.logger.info(f"File Size: {file_size} bytes (~{file_size / (1024**3):.2f} GB), Chunk Size: {chunk_size} bytes")
+            self.logger.info(f"File Size: {file_size} bytes ({file_size / (1024**2):.1f} MB), Chunk Size: {chunk_size} bytes, Target Chunks: {chunks}")
             
             # Check if we have write permission by attempting to create a temporary file
             temp_test_path = f"{remote_dir}/.filepilot_test_{int(time.time())}"
@@ -337,6 +359,8 @@ class SFTPClient:
                     with self.sftp.open(remote_path, 'wb') as remote_file:
                         bytes_transferred = 0
                         start_time = time.time()
+                        last_progress_time = start_time
+                        last_log_time = start_time
                         
                         while True:
                             chunk_data = local_file.read(chunk_size)
@@ -349,16 +373,27 @@ class SFTPClient:
                             bytes_transferred += len(chunk_data)
                             percent = (bytes_transferred / file_size) * 100
                             
-                            # Call the progress callback if provided
-                            if progress_callback:
+                            current_time = time.time()
+                            
+                            # Call progress callback every 100ms to avoid UI flooding
+                            if progress_callback and (current_time - last_progress_time) >= 0.1:
                                 progress_callback(bytes_transferred, file_size, percent)
+                                last_progress_time = current_time
                             
-                            # Calculate and log transfer rate
-                            elapsed_time = max(time.time() - start_time, 0.1)
-                            transfer_rate = bytes_transferred / elapsed_time / (1024 * 1024)  # MB/s
+                            # Log progress every 5 seconds or every 10% completion to reduce log spam
+                            should_log = (current_time - last_log_time) >= 5.0 or percent % 10 < 0.1
+                            if should_log:
+                                elapsed_time = max(current_time - start_time, 0.1)
+                                transfer_rate = bytes_transferred / elapsed_time / (1024 * 1024)  # MB/s
+                                
+                                self.logger.info(f"Progress: {bytes_transferred/(1024**2):.1f} MB of {file_size/(1024**2):.1f} MB "
+                                                 f"({percent:.1f}%) at {transfer_rate:.2f} MB/s")
+                                last_log_time = current_time
+                        
+                        # Final progress callback
+                        if progress_callback:
+                            progress_callback(bytes_transferred, file_size, 100.0)
                             
-                            self.logger.info(f"Progress: {bytes_transferred/(1024**3):.2f} GB of {file_size/(1024**3):.2f} GB "
-                                             f"({percent:.1f}%) at {transfer_rate:.2f} MB/s")
             except PermissionError as pe:
                 self.logger.error(f"Permission denied writing to {remote_path}: {str(pe)}")
                 return False
@@ -458,7 +493,8 @@ class SFTPClient:
                       remote_path: str, 
                       local_path: str, 
                       chunks: int = 10, 
-                      progress_callback: Callable[[float, float, float], None] = None) -> bool:
+                      progress_callback: Callable[[float, float, float], None] = None,
+                      overwrite_callback: Callable[[str], bool] = None) -> bool:
         """
         Download a file from the SFTP server with chunking and progress reporting.
         
@@ -468,6 +504,8 @@ class SFTPClient:
             chunks: Number of chunks to split the file into
             progress_callback: Optional callback function for progress updates:
                                func(bytes_transferred, total_bytes, percentage)
+            overwrite_callback: Optional callback function to ask user about overwriting:
+                               func(local_path) -> bool (True to overwrite, False to cancel)
         
         Returns:
             bool: True if download successful, False otherwise
@@ -478,10 +516,24 @@ class SFTPClient:
             
         try:
             file_size = self.sftp.stat(remote_path).st_size
-            chunk_size = max(file_size // chunks, 1024)  # Ensure minimum chunk size
+            
+            # Check if local file already exists and ask for overwrite confirmation
+            if os.path.exists(local_path):
+                if overwrite_callback:
+                    if not overwrite_callback(local_path):
+                        self.logger.info(f"Download canceled by user: {local_path}")
+                        return False
+                else:
+                    self.logger.warning(f"Local file exists but no overwrite callback provided: {local_path}")
+                    # Continue with download if no callback is provided (backward compatibility)
+            
+            # Use adaptive chunk size based on file size, but ensure it's reasonable
+            min_chunk_size = 64 * 1024  # 64KB minimum
+            max_chunk_size = 1024 * 1024  # 1MB maximum
+            chunk_size = max(min_chunk_size, min(file_size // chunks, max_chunk_size))
             
             self.logger.info(f"Starting download: '{remote_path}' -> '{local_path}'")
-            self.logger.info(f"File Size: {file_size} bytes (~{file_size / (1024**3):.2f} GB), Chunk Size: {chunk_size} bytes")
+            self.logger.info(f"File Size: {file_size} bytes ({file_size / (1024**2):.1f} MB), Chunk Size: {chunk_size} bytes, Target Chunks: {chunks}")
             
             os.makedirs(os.path.dirname(os.path.abspath(local_path)), exist_ok=True)
             
@@ -489,6 +541,8 @@ class SFTPClient:
                 with open(local_path, 'wb') as local_file:
                     bytes_transferred = 0
                     start_time = time.time()
+                    last_progress_time = start_time
+                    last_log_time = start_time
                     
                     while True:
                         chunk_data = remote_file.read(chunk_size)
@@ -501,16 +555,26 @@ class SFTPClient:
                         bytes_transferred += len(chunk_data)
                         percent = (bytes_transferred / file_size) * 100
                         
-                        # Call the progress callback if provided
-                        if progress_callback:
+                        current_time = time.time()
+                        
+                        # Call progress callback every 100ms to avoid UI flooding
+                        if progress_callback and (current_time - last_progress_time) >= 0.1:
                             progress_callback(bytes_transferred, file_size, percent)
+                            last_progress_time = current_time
                         
-                        # Calculate and log transfer rate
-                        elapsed_time = max(time.time() - start_time, 0.1)
-                        transfer_rate = bytes_transferred / elapsed_time / (1024 * 1024)  # MB/s
-                        
-                        self.logger.info(f"Progress: {bytes_transferred/(1024**3):.2f} GB of {file_size/(1024**3):.2f} GB "
-                                         f"({percent:.1f}%) at {transfer_rate:.2f} MB/s")
+                        # Log progress every 5 seconds or every 10% completion to reduce log spam
+                        should_log = (current_time - last_log_time) >= 5.0 or percent % 10 < 0.1
+                        if should_log:
+                            elapsed_time = max(current_time - start_time, 0.1)
+                            transfer_rate = bytes_transferred / elapsed_time / (1024 * 1024)  # MB/s
+                            
+                            self.logger.info(f"Progress: {bytes_transferred/(1024**2):.1f} MB of {file_size/(1024**2):.1f} MB "
+                                             f"({percent:.1f}%) at {transfer_rate:.2f} MB/s")
+                            last_log_time = current_time
+                    
+                    # Final progress callback
+                    if progress_callback:
+                        progress_callback(bytes_transferred, file_size, 100.0)
                         
             self.logger.info(f"File download completed successfully: {remote_path} -> {local_path}")
             return True
@@ -526,7 +590,8 @@ class SFTPClient:
                                   dest_path: str,
                                   temp_path: str = None,
                                   chunks: int = 10,
-                                  progress_callback: Callable[[float, float, float], None] = None) -> bool:
+                                  progress_callback: Callable[[float, float, float], None] = None,
+                                  overwrite_callback: Callable[[str], bool] = None) -> bool:
         """
         Transfer a file from one server to another via the local system as an intermediary.
         Uses secure temporary file handling to prevent credential exposure.
@@ -539,6 +604,7 @@ class SFTPClient:
             temp_path: Temporary file path on local system (optional)
             chunks: Number of chunks for transfer
             progress_callback: Optional callback function for progress updates
+            overwrite_callback: Optional callback function for overwrite confirmation
             
         Returns:
             bool: True if transfer successful, False otherwise
@@ -603,7 +669,8 @@ class SFTPClient:
             self.logger.info(f"Uploading from secure temp location to destination server: {dest_path}")
             upload_result = dest_client.upload_file(
                 temp_path, dest_path, chunks,
-                lambda bytes_t, total, percent: progress_callback(bytes_t, total, 50 + percent/2) if progress_callback else None
+                lambda bytes_t, total, percent: progress_callback(bytes_t, total, 50 + percent/2) if progress_callback else None,
+                overwrite_callback
             )
             dest_client.disconnect()
             

@@ -35,7 +35,8 @@ class TransferItem:
                 source_config: Dict = None,
                 dest_config: Dict = None,
                 chunks: int = 10,
-                progress_callback: Callable = None): # Added progress_callback
+                progress_callback: Callable = None,
+                overwrite_callback: Callable = None): # Added overwrite_callback
         """
         Initialize a transfer item.
         
@@ -48,6 +49,7 @@ class TransferItem:
             dest_config: Destination server configuration (for server-to-server)
             chunks: Number of chunks to use for transfer
             progress_callback: Callback for progress updates (transfer_id, transferred_bytes, total_bytes)
+            overwrite_callback: Callback for overwrite confirmation (file_path) -> bool
         """
         self.id = int(time.time() * 1000)  # Unique ID based on timestamp
         self.transfer_type = transfer_type
@@ -66,6 +68,7 @@ class TransferItem:
         self.error_message = ""
         self.transfer_rate = 0.0
         self._progress_callback = progress_callback # Stored here
+        self._overwrite_callback = overwrite_callback # Stored here
         
     def __lt__(self, other):
         """Compare transfers based on priority for the priority queue."""
@@ -79,6 +82,10 @@ class TransferItem:
                 elapsed_time = self.end_time - self.start_time
             else:
                 elapsed_time = time.time() - self.start_time
+        
+        # Safely handle division by zero for bytes
+        transferred_mb = self.bytes_transferred / (1024 * 1024) if self.bytes_transferred > 0 else 0
+        total_mb = self.total_bytes / (1024 * 1024) if self.total_bytes > 0 else 0
                 
         return {
             'id': self.id,
@@ -87,8 +94,8 @@ class TransferItem:
             'destination': self.dest_path,
             'status': self.status.name,
             'progress': f"{self.progress:.1f}%",
-            'transferred': f"{self.bytes_transferred / (1024 * 1024):.2f} MB",
-            'total': f"{self.total_bytes / (1024 * 1024):.2f} MB",
+            'transferred': f"{transferred_mb:.2f} MB",
+            'total': f"{total_mb:.2f} MB",
             'rate': f"{self.transfer_rate:.2f} MB/s",
             'elapsed_time': f"{elapsed_time:.1f}s",
             'error': self.error_message
@@ -99,12 +106,12 @@ class TransferManager:
     Manages file transfers with queue, pause, resume, and cancel operations.
     Supports local-to-server and server-to-server transfers.
     """
-    def __init__(self, max_concurrent=3, logger=None):
+    def __init__(self, max_concurrent=3, logger=None):  # Changed back to 3 for parallel processing
         """
         Initialize the transfer manager.
         
         Args:
-            max_concurrent: Maximum number of concurrent transfers
+            max_concurrent: Maximum number of concurrent transfers (3 for parallel processing)
             logger: Optional logger instance
         """
         self.transfer_queue = PriorityQueue()
@@ -114,6 +121,9 @@ class TransferManager:
         self.running = True
         self.lock = threading.Lock()
         self.worker_thread = None
+        # Connection pool to manage multiple SFTP connections safely
+        self.connection_pool = {}
+        self.pool_lock = threading.Lock()
         
         # Set up logger
         if logger:
@@ -156,7 +166,8 @@ class TransferManager:
                     server_config: Dict,
                     priority: int = 1,
                     chunks: int = 10,
-                    progress_callback: Callable = None) -> int: # Added progress_callback
+                    progress_callback: Callable = None,
+                    overwrite_callback: Callable = None) -> int:
         """
         Queue a file upload.
         
@@ -167,6 +178,7 @@ class TransferManager:
             priority: Transfer priority (lower = higher priority)
             chunks: Number of chunks for transfer
             progress_callback: Callback function for progress updates
+            overwrite_callback: Callback function for overwrite confirmation
             
         Returns:
             int: Transfer ID
@@ -178,7 +190,8 @@ class TransferManager:
             priority,
             dest_config=server_config,
             chunks=chunks,
-            progress_callback=progress_callback # Pass callback to TransferItem
+            progress_callback=progress_callback,
+            overwrite_callback=overwrite_callback
         )
         
         if os.path.exists(local_path):
@@ -197,7 +210,8 @@ class TransferManager:
                      server_config: Dict,
                      priority: int = 1,
                      chunks: int = 10,
-                     progress_callback: Callable = None) -> int: # Added progress_callback
+                     progress_callback: Callable = None,
+                     overwrite_callback: Callable = None) -> int:
         """
         Queue a file download.
         
@@ -208,6 +222,7 @@ class TransferManager:
             priority: Transfer priority (lower = higher priority)
             chunks: Number of chunks for transfer
             progress_callback: Callback function for progress updates
+            overwrite_callback: Callback function for overwrite confirmation
             
         Returns:
             int: Transfer ID
@@ -219,7 +234,8 @@ class TransferManager:
             priority,
             source_config=server_config,
             chunks=chunks,
-            progress_callback=progress_callback # Pass callback to TransferItem
+            progress_callback=progress_callback,
+            overwrite_callback=overwrite_callback
         )
         
         # Create directory for the download if it doesn't exist
@@ -241,7 +257,8 @@ class TransferManager:
                              dest_config: Dict,
                              priority: int = 1,
                              chunks: int = 10,
-                             progress_callback: Callable = None) -> int: # Added progress_callback here
+                             progress_callback: Callable = None,
+                             overwrite_callback: Callable = None) -> int: # Added progress_callback here
         """
         Queue a server-to-server transfer.
         
@@ -253,6 +270,7 @@ class TransferManager:
             priority: Transfer priority (lower = higher priority)
             chunks: Number of chunks for transfer
             progress_callback: Callback function for progress updates (transfer_id, transferred_bytes, total_bytes)
+            overwrite_callback: Callback function for overwrite confirmation
             
         Returns:
             int: Transfer ID
@@ -265,7 +283,8 @@ class TransferManager:
             source_config=source_config,
             dest_config=dest_config,
             chunks=chunks,
-            progress_callback=progress_callback # Pass callback to TransferItem
+            progress_callback=progress_callback,
+            overwrite_callback=overwrite_callback
         )
         
         return self.add_transfer(transfer)
@@ -330,7 +349,7 @@ class TransferManager:
         
     def cancel_transfer(self, transfer_id: int) -> bool:
         """
-        Cancel a transfer.
+        Cancel a transfer and automatically start next queued transfer if needed.
         
         Args:
             transfer_id: ID of the transfer to cancel
@@ -338,29 +357,38 @@ class TransferManager:
         Returns:
             bool: True if successful, False otherwise
         """
-        # Check active transfers
+        canceled = False
+        
+        # Check active transfers first
         with self.lock:
             if transfer_id in self.active_transfers:
                 transfer = self.active_transfers[transfer_id]
                 transfer.status = TransferStatus.CANCELED
-                self.logger.info(f"Transfer canceled: {transfer_id}")
-                return True
-                
-        # Check queued transfers (need to rebuild queue)
-        new_queue = PriorityQueue()
-        canceled = False
-        
-        while not self.transfer_queue.empty():
-            priority, item = self.transfer_queue.get()
-            if item.id == transfer_id:
-                item.status = TransferStatus.CANCELED
-                self.transfer_history.append(item)
+                self.logger.info(f"Active transfer canceled: {transfer_id}")
                 canceled = True
-                self.logger.info(f"Queued transfer canceled: {transfer_id}")
-            else:
-                new_queue.put((priority, item))
                 
-        self.transfer_queue = new_queue
+                # Don't remove from active_transfers here - let _process_transfer handle it
+                # This ensures the worker thread can start a new transfer automatically
+                
+        if not canceled:
+            # Check queued transfers (need to rebuild queue)
+            new_queue = PriorityQueue()
+            
+            while not self.transfer_queue.empty():
+                try:
+                    priority, item = self.transfer_queue.get(block=False)
+                    if item.id == transfer_id:
+                        item.status = TransferStatus.CANCELED
+                        self.transfer_history.append(item)
+                        canceled = True
+                        self.logger.info(f"Queued transfer canceled: {transfer_id}")
+                    else:
+                        new_queue.put((priority, item))
+                except:
+                    break
+                    
+            self.transfer_queue = new_queue
+            
         return canceled
         
     def get_transfer_status(self, transfer_id: int) -> Dict:
@@ -417,45 +445,89 @@ class TransferManager:
         }
         
     def _worker(self):
-        """Worker thread that processes the transfer queue."""
+        """Worker thread that processes the transfer queue and maintains max concurrent transfers."""
         while self.running:
-            # Check if we can start more transfers
-            with self.lock:
-                active_count = len(self.active_transfers)
+            try:
+                # Check if we can start more transfers
+                with self.lock:
+                    active_count = len(self.active_transfers)
                 
-            if active_count < self.max_concurrent and not self.transfer_queue.empty():
-                try:
-                    # Get next transfer from queue
-                    _, transfer_item = self.transfer_queue.get(block=False)
-                    
-                    # Skip if paused or canceled
-                    if transfer_item.status != TransferStatus.QUEUED:
-                        if transfer_item.status == TransferStatus.PAUSED:
-                            self.transfer_history.append(transfer_item)
+                # Start new transfers if we have slots available and items in queue
+                while active_count < self.max_concurrent and not self.transfer_queue.empty():
+                    try:
+                        # Get next transfer from queue
+                        _, transfer_item = self.transfer_queue.get(block=False)
+                        
+                        # Skip if paused or canceled
+                        if transfer_item.status != TransferStatus.QUEUED:
+                            if transfer_item.status == TransferStatus.PAUSED:
+                                self.transfer_history.append(transfer_item)
+                            continue
+                            
+                        # Start the transfer in a completely isolated thread
+                        try:
+                            transfer_thread = threading.Thread(
+                                target=self._process_transfer,
+                                args=(transfer_item,),
+                                daemon=True,
+                                name=f"Transfer-{transfer_item.id}"  # Name threads for debugging
+                            )
+                            
+                            with self.lock:
+                                self.active_transfers[transfer_item.id] = transfer_item
+                                active_count = len(self.active_transfers)  # Update count
+                                
+                            transfer_thread.start()
+                            self.logger.info(f"Started transfer {transfer_item.id}: {transfer_item.source_path} -> {transfer_item.dest_path}")
+                            
+                        except Exception as thread_error:
+                            # If we can't start the thread, mark transfer as failed and continue
+                            self.logger.error(f"Failed to start thread for transfer {transfer_item.id}: {str(thread_error)}")
+                            transfer_item.status = TransferStatus.FAILED
+                            transfer_item.error_message = f"Failed to start transfer thread: {str(thread_error)}"
+                            with self.lock:
+                                if transfer_item.id in self.active_transfers:
+                                    del self.active_transfers[transfer_item.id]
+                                self.transfer_history.append(transfer_item)
+                            continue
+                        
+                    except Exception as queue_error:
+                        self.logger.error(f"Error processing queue item: {str(queue_error)}")
+                        # Continue processing other items instead of breaking
                         continue
                         
-                    # Start the transfer
-                    transfer_thread = threading.Thread(
-                        target=self._process_transfer,
-                        args=(transfer_item,),
-                        daemon=True
-                    )
-                    
+                # Clean up any completed/failed/canceled transfers from active list
+                # This ensures slots become available immediately
+                try:
                     with self.lock:
-                        self.active_transfers[transfer_item.id] = transfer_item
+                        completed_transfers = []
+                        for transfer_id, transfer in self.active_transfers.items():
+                            if transfer.status in [TransferStatus.COMPLETED, TransferStatus.FAILED, 
+                                                 TransferStatus.CANCELED, TransferStatus.PAUSED]:
+                                completed_transfers.append(transfer_id)
                         
-                    transfer_thread.start()
-                    self.logger.info(f"Started transfer: {transfer_item.source_path} -> {transfer_item.dest_path}")
+                        for transfer_id in completed_transfers:
+                            transfer = self.active_transfers[transfer_id]
+                            del self.active_transfers[transfer_id]
+                            if transfer not in self.transfer_history:
+                                self.transfer_history.append(transfer)
+                            self.logger.info(f"Removed completed transfer {transfer_id} from active list")
+                            
+                except Exception as cleanup_error:
+                    self.logger.error(f"Error during active transfers cleanup: {str(cleanup_error)}")
+                        
+            except Exception as worker_error:
+                # Log the error but keep the worker running
+                self.logger.error(f"Error in transfer worker main loop: {str(worker_error)}", exc_info=True)
+                # Don't break - keep the worker running
                     
-                except Exception as e:
-                    self.logger.error(f"Error in transfer worker: {str(e)}")
-                    
-            # Sleep briefly to prevent CPU thrashing
-            time.sleep(0.1)
+            # Sleep briefly to prevent CPU thrashing, but check frequently for new slots
+            time.sleep(0.2)
             
     def _process_transfer(self, transfer: TransferItem):
         """
-        Process a single transfer item.
+        Process a single transfer item with proper error isolation.
+        Each transfer gets its own dedicated SFTP connection.
         
         Args:
             transfer: The transfer item to process
@@ -465,47 +537,47 @@ class TransferManager:
             transfer.status = TransferStatus.IN_PROGRESS
             transfer.start_time = time.time()
             
-            # Check if we're using an active connection from the GUI
-            using_active_connection = False
-            
-            if transfer.transfer_type == TransferType.UPLOAD:
-                if transfer.dest_config.get('host') == 'active_connection':
-                    using_active_connection = True
-            elif transfer.transfer_type == TransferType.DOWNLOAD:
-                if transfer.source_config.get('host') == 'active_connection':
-                    using_active_connection = True
-            
-            # Get active connection from remote panel if needed
+            # Always create a new SFTP client for each transfer to avoid concurrency issues
             client = None
             
-            if using_active_connection:
-                # Find the main window to access its remote panel
-                try:
-                    from PyQt5.QtWidgets import QApplication
-                    main_window = None
-                    
-                    # Find main window instance
-                    for widget in QApplication.topLevelWidgets():
-                        if widget.__class__.__name__ == 'MainWindow':
-                            main_window = widget
-                            break
-                    
-                    if main_window and hasattr(main_window, 'remote_panel'):
-                        remote_panel = main_window.remote_panel
-                        if remote_panel.client and remote_panel.client.sftp:
-                            # Use the existing SFTP client
-                            client = remote_panel.client
-                            self.logger.info("Using existing SFTP client connection from remote panel")
-                except Exception as e:
-                    self.logger.error(f"Failed to get active SFTP client: {str(e)}")
-            
-            # Create a new SFTP client if we couldn't reuse the existing one
-            if client is None:
+            try:
                 client = SFTPClient(logger=self.logger)
                 
                 # Connect based on transfer type - use secure credential handling
                 if transfer.transfer_type == TransferType.UPLOAD:
                     config = transfer.dest_config.copy()
+                    
+                    # Check if we should use the active connection's credentials
+                    if config.get('host') == 'active_connection':
+                        # Get credentials from the active connection
+                        try:
+                            from PyQt5.QtWidgets import QApplication
+                            main_window = None
+                            
+                            # Find main window instance
+                            for widget in QApplication.topLevelWidgets():
+                                if widget.__class__.__name__ == 'MainWindow':
+                                    main_window = widget
+                                    break
+                            
+                            if main_window and hasattr(main_window, 'remote_panel'):
+                                remote_panel = main_window.remote_panel
+                                if remote_panel.client and remote_panel.client.connection_config:
+                                    # Use the connection config from the active connection
+                                    config = remote_panel.client.connection_config.copy()
+                                    self.logger.info(f"Using existing SFTP connection config for transfer {transfer.id}")
+                                else:
+                                    transfer.status = TransferStatus.FAILED
+                                    transfer.error_message = "No active SFTP connection available"
+                                    return
+                            else:
+                                transfer.status = TransferStatus.FAILED
+                                transfer.error_message = "No main window or remote panel found"
+                                return
+                        except Exception as e:
+                            transfer.status = TransferStatus.FAILED
+                            transfer.error_message = f"Failed to get active connection config: {str(e)}"
+                            return
                     
                     # Use secure context manager for credential extraction
                     with SecureTemporaryCredentials(config) as temp_params:
@@ -517,171 +589,248 @@ class TransferManager:
                 elif transfer.transfer_type == TransferType.DOWNLOAD:
                     config = transfer.source_config.copy()
                     
+                    # Check if we should use the active connection's credentials
+                    if config.get('host') == 'active_connection':
+                        # Get credentials from the active connection
+                        try:
+                            from PyQt5.QtWidgets import QApplication
+                            main_window = None
+                            
+                            # Find main window instance
+                            for widget in QApplication.topLevelWidgets():
+                                if widget.__class__.__name__ == 'MainWindow':
+                                    main_window = widget
+                                    break
+                            
+                            if main_window and hasattr(main_window, 'remote_panel'):
+                                remote_panel = main_window.remote_panel
+                                if remote_panel.client and remote_panel.client.connection_config:
+                                    # Use the connection config from the active connection
+                                    config = remote_panel.client.connection_config.copy()
+                                    self.logger.info(f"Using existing SFTP connection config for transfer {transfer.id}")
+                                else:
+                                    transfer.status = TransferStatus.FAILED
+                                    transfer.error_message = "No active SFTP connection available"
+                                    return
+                            else:
+                                transfer.status = TransferStatus.FAILED
+                                transfer.error_message = "No main window or remote panel found"
+                                return
+                        except Exception as e:
+                            transfer.status = TransferStatus.FAILED
+                            transfer.error_message = f"Failed to get active connection config: {str(e)}"
+                            return
+                    
                     # Use secure context manager for credential extraction
                     with SecureTemporaryCredentials(config) as temp_params:
                         if not client.connect(**temp_params):
                             transfer.status = TransferStatus.FAILED
                             transfer.error_message = "Failed to connect to source server"
                             return
+                            
+            except Exception as e:
+                transfer.status = TransferStatus.FAILED
+                transfer.error_message = f"Failed to create SFTP client: {str(e)}"
+                self.logger.error(f"Transfer {transfer.id} failed to create client: {str(e)}")
+                return
             
             # Progress callback wrapper for SFTPClient
-            # This wrapper translates SFTPClient's progress args to TransferManager's expected args
-            # and then calls the TransferItem's stored _progress_callback
             def sftp_progress_wrapper(bytes_transferred, total_bytes, percent):
-                transfer.bytes_transferred = bytes_transferred
-                transfer.total_bytes = total_bytes
-                transfer.progress = percent
-                elapsed = time.time() - transfer.start_time
-                if elapsed > 0:
-                    transfer.transfer_rate = bytes_transferred / elapsed / (1024 * 1024)  # MB/s
-                
-                # Call the TransferItem's stored progress callback if it exists
-                if transfer._progress_callback:
-                    try:
-                        # The stored callback expects (transfer_id, transferred_bytes, total_bytes)
-                        transfer._progress_callback(transfer.id, bytes_transferred, total_bytes)
-                    except Exception as e:
-                        self.logger.error(f"Error in transfer item progress callback: {str(e)}")
-                
-                # Check if transfer was canceled or paused
-                if transfer.status in [TransferStatus.CANCELED, TransferStatus.PAUSED]:
-                    raise InterruptedError("Transfer was canceled or paused")
+                try:
+                    transfer.bytes_transferred = bytes_transferred
+                    transfer.total_bytes = total_bytes
+                    transfer.progress = percent
+                    elapsed = time.time() - transfer.start_time
+                    if elapsed > 0:
+                        transfer.transfer_rate = bytes_transferred / elapsed / (1024 * 1024)  # MB/s
+                    
+                    # Call the TransferItem's stored progress callback if it exists
+                    if transfer._progress_callback:
+                        try:
+                            # The stored callback expects (transfer_id, transferred_bytes, total_bytes)
+                            transfer._progress_callback(transfer.id, bytes_transferred, total_bytes)
+                        except Exception as e:
+                            self.logger.error(f"Error in transfer {transfer.id} progress callback: {str(e)}")
+                    
+                    # Check if transfer was canceled or paused
+                    if transfer.status in [TransferStatus.CANCELED, TransferStatus.PAUSED]:
+                        raise InterruptedError("Transfer was canceled or paused")
+                except Exception as e:
+                    self.logger.error(f"Error in progress wrapper for transfer {transfer.id}: {str(e)}")
             
-            # Process based on transfer type
-            if transfer.transfer_type == TransferType.UPLOAD:
-                # Upload file
-                result = client.upload_file(
-                    transfer.source_path, 
-                    transfer.dest_path,
-                    transfer.chunks,
-                    sftp_progress_wrapper # Pass our wrapper
-                )
-                
-                # Only disconnect if we created a new connection
-                if not using_active_connection:
-                    client.disconnect()
+            # Process based on transfer type with isolated error handling
+            try:
+                if transfer.transfer_type == TransferType.UPLOAD:
+                    # Upload file with overwrite callback
+                    def upload_overwrite_callback(remote_path):
+                        # For non-GUI transfers, we'll log and return True (allow overwrite)
+                        # GUI transfers will provide their own callback
+                        if hasattr(transfer, '_overwrite_callback') and transfer._overwrite_callback:
+                            return transfer._overwrite_callback(remote_path)
+                        else:
+                            self.logger.warning(f"File exists on remote server, proceeding with overwrite: {remote_path}")
+                            return True
                     
-                if result:
-                    transfer.status = TransferStatus.COMPLETED
-                else:
-                    transfer.status = TransferStatus.FAILED
-                    transfer.error_message = "Upload failed"
+                    result = client.upload_file(
+                        transfer.source_path, 
+                        transfer.dest_path,
+                        transfer.chunks,
+                        sftp_progress_wrapper,
+                        upload_overwrite_callback
+                    )
                     
-            elif transfer.transfer_type == TransferType.DOWNLOAD:
-                # Download file
-                result = client.download_file(
-                    transfer.source_path,
-                    transfer.dest_path,
-                    transfer.chunks,
-                    sftp_progress_wrapper # Pass our wrapper
-                )
-                
-                # Only disconnect if we created a new connection
-                if not using_active_connection:
-                    client.disconnect()
+                    if result:
+                        transfer.status = TransferStatus.COMPLETED
+                    else:
+                        transfer.status = TransferStatus.FAILED
+                        transfer.error_message = "Upload failed"
+                        
+                elif transfer.transfer_type == TransferType.DOWNLOAD:
+                    # Download file with overwrite callback
+                    def download_overwrite_callback(local_path):
+                        # For non-GUI transfers, we'll log and return True (allow overwrite)
+                        # GUI transfers will provide their own callback
+                        if hasattr(transfer, '_overwrite_callback') and transfer._overwrite_callback:
+                            return transfer._overwrite_callback(local_path)
+                        else:
+                            self.logger.warning(f"File exists locally, proceeding with overwrite: {local_path}")
+                            return True
                     
-                if result:
-                    transfer.status = TransferStatus.COMPLETED
-                else:
-                    transfer.status = TransferStatus.FAILED
-                    transfer.error_message = "Download failed"
+                    result = client.download_file(
+                        transfer.source_path,
+                        transfer.dest_path,
+                        transfer.chunks,
+                        sftp_progress_wrapper,
+                        download_overwrite_callback
+                    )
                     
-            elif transfer.transfer_type == TransferType.SERVER_TO_SERVER:
-                # Server-to-server transfer - use secure credential handling
-                source_config = transfer.source_config.copy()
-                dest_config = transfer.dest_config.copy()
-                
-                # Use secure context managers for both credential sets
-                # No plain text credentials remain in memory after this block
-                with SecureTemporaryCredentials(source_config) as source_temp_params:
-                    with SecureTemporaryCredentials(dest_config) as dest_temp_params:
-                        result = client.server_to_server_transfer(
-                            source_temp_params,
-                            dest_temp_params,
-                            transfer.source_path,
-                            transfer.dest_path,
-                            chunks=transfer.chunks,
-                            progress_callback=sftp_progress_wrapper
-                        )
-                
-                if result:
-                    transfer.status = TransferStatus.COMPLETED
-                else:
-                    transfer.status = TransferStatus.FAILED
-                    transfer.error_message = "Server-to-server transfer failed"
+                    if result:
+                        transfer.status = TransferStatus.COMPLETED
+                    else:
+                        transfer.status = TransferStatus.FAILED
+                        transfer.error_message = "Download failed"
+                        
+                elif transfer.transfer_type == TransferType.SERVER_TO_SERVER:
+                    # Server-to-server transfer - use secure credential handling
+                    source_config = transfer.source_config.copy()
+                    dest_config = transfer.dest_config.copy()
+                    
+                    # Server-to-server overwrite callback
+                    def s2s_overwrite_callback(dest_path):
+                        # For non-GUI transfers, we'll log and return True (allow overwrite)
+                        # GUI transfers will provide their own callback
+                        if hasattr(transfer, '_overwrite_callback') and transfer._overwrite_callback:
+                            return transfer._overwrite_callback(dest_path)
+                        else:
+                            self.logger.warning(f"File exists on destination server, proceeding with overwrite: {dest_path}")
+                            return True
+                    
+                    # Use secure context managers for both credential sets
+                    with SecureTemporaryCredentials(source_config) as source_temp_params:
+                        with SecureTemporaryCredentials(dest_config) as dest_temp_params:
+                            result = client.server_to_server_transfer(
+                                source_temp_params,
+                                dest_temp_params,
+                                transfer.source_path,
+                                transfer.dest_path,
+                                chunks=transfer.chunks,
+                                progress_callback=sftp_progress_wrapper,
+                                overwrite_callback=s2s_overwrite_callback
+                            )
+                    
+                    if result:
+                        transfer.status = TransferStatus.COMPLETED
+                    else:
+                        transfer.status = TransferStatus.FAILED
+                        transfer.error_message = "Server-to-server transfer failed"
+                        
+            except Exception as e:
+                transfer.status = TransferStatus.FAILED
+                transfer.error_message = f"Transfer operation failed: {str(e)}"
+                self.logger.error(f"Transfer {transfer.id} operation failed: {str(e)}")
                     
         except InterruptedError:
-            # Transfer was canceled or paused
-            pass
+            # Transfer was canceled or paused - this is normal
+            self.logger.info(f"Transfer {transfer.id} was interrupted (canceled/paused)")
             
         except Exception as e:
+            # Catch any other unexpected errors to prevent worker thread from stopping
             transfer.status = TransferStatus.FAILED
-            transfer.error_message = str(e)
-            self.logger.error(f"Transfer error: {str(e)}")
+            transfer.error_message = f"Unexpected error: {str(e)}"
+            self.logger.error(f"Unexpected error in transfer {transfer.id}: {str(e)}", exc_info=True)
             
         finally:
+            # Always disconnect the client when transfer is complete
+            if client:
+                try:
+                    client.disconnect()
+                    self.logger.info(f"Disconnected SFTP client for transfer {transfer.id}")
+                except Exception as disconnect_error:
+                    self.logger.warning(f"Error disconnecting client for transfer {transfer.id}: {str(disconnect_error)}")
+            
             # Record end time and cleanup
-            transfer.end_time = time.time()
-            
-            # Force garbage collection to clear any lingering credential references
-            gc.collect()
-            
-            # Move from active to history
-            with self.lock:
-                if transfer.id in self.active_transfers:
-                    del self.active_transfers[transfer.id]
-                    self.transfer_history.append(transfer)
-                    
-            self.logger.info(f"Transfer completed with status {transfer.status.name}: {transfer.source_path} -> {transfer.dest_path}")
-    
-    # Removed the _register_progress_callback and _hook_progress_callback methods
-    # as the callback is now passed directly to TransferItem on creation.
+            try:
+                transfer.end_time = time.time()
+                
+                # Force garbage collection to clear any lingering credential references
+                gc.collect()
+                
+                # Move from active to history - use proper locking
+                with self.lock:
+                    if transfer.id in self.active_transfers:
+                        del self.active_transfers[transfer.id]
+                        self.transfer_history.append(transfer)
+                        
+                self.logger.info(f"Transfer {transfer.id} completed with status {transfer.status.name}: {transfer.source_path} -> {transfer.dest_path}")
+                
+            except Exception as cleanup_error:
+                self.logger.error(f"Error during cleanup for transfer {transfer.id}: {str(cleanup_error)}")
 
-    def upload_file(self, source_path: str, dest_path: str, progress_callback: Callable = None) -> int:
+    def upload_file(self, local_path: str, remote_path: str, progress_callback: Callable = None, overwrite_callback: Callable = None) -> int:
         """
-        Upload a file from local system to remote server.
+        Convenience method for uploading a file using the active connection.
         
         Args:
-            source_path: Local file path
-            dest_path: Path on the remote server
+            local_path: Path to local file
+            remote_path: Destination path on server
             progress_callback: Callback function for progress updates
+            overwrite_callback: Callback function for overwrite confirmation
             
         Returns:
             int: Transfer ID
         """
-        # For uploads from the GUI, we're using an active SFTP connection
-        # The connection is already established in the remote panel
-        # We just need to create a minimal config to identify the connection
-        
-        # Create a basic server config (we rely on existing connection)
+        # Use special config to indicate we want to use the active connection
         server_config = {'host': 'active_connection'}
         
-        # Queue the upload with default parameters, passing the progress_callback
-        transfer_id = self.queue_upload(source_path, dest_path, server_config, progress_callback=progress_callback)
-        
-        return transfer_id
+        return self.queue_upload(
+            local_path=local_path,
+            remote_path=remote_path,
+            server_config=server_config,
+            progress_callback=progress_callback,
+            overwrite_callback=overwrite_callback
+        )
     
-    def download_file(self, source_path: str, dest_path: str, progress_callback: Callable = None) -> int:
+    def download_file(self, remote_path: str, local_path: str, progress_callback: Callable = None, overwrite_callback: Callable = None) -> int:
         """
-        Download a file from remote server to local system.
+        Convenience method for downloading a file using the active connection.
         
         Args:
-            source_path: Path on the remote server
-            dest_path: Local file path
+            remote_path: Path to remote file
+            local_path: Destination path on local system
             progress_callback: Callback function for progress updates
+            overwrite_callback: Callback function for overwrite confirmation
             
         Returns:
             int: Transfer ID
         """
-        # For downloads from the GUI, we're using an active SFTP connection
-        # The connection is already established in the remote panel
-        # We just need to create a minimal config to identify the connection
-        
-        # Create a basic server config (we rely on existing connection)
+        # Use special config to indicate we want to use the active connection
         server_config = {'host': 'active_connection'}
         
-        # Queue the download with default parameters, passing the progress_callback
-        transfer_id = self.queue_download(source_path, dest_path, server_config, progress_callback=progress_callback)
-        
-        return transfer_id
+        return self.queue_download(
+            remote_path=remote_path,
+            local_path=local_path,
+            server_config=server_config,
+            progress_callback=progress_callback,
+            overwrite_callback=overwrite_callback
+        )
 

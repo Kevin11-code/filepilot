@@ -141,6 +141,16 @@ class ServerToServerPanel(DualPanelWidget):
             if not ok or not dest_full_path:
                 return
 
+        # Create overwrite callback for server-to-server transfer
+        def s2s_overwrite_callback(file_path):
+            reply = QMessageBox.question(
+                self, "File Exists",
+                f"The file '{os.path.basename(file_path)}' already exists on the destination server.\n\n"
+                f"Destination path: {file_path}\n\n"
+                "Do you want to overwrite it?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            return reply == QMessageBox.Yes
+
         # Get connection configs for transfer manager
         source_conn_name = self.source_panel.conn_combo.currentText()
         dest_conn_name = self.destination_panel.conn_combo.currentText()
@@ -162,7 +172,8 @@ class ServerToServerPanel(DualPanelWidget):
                 dest_config,
                 # Pass lambda with TransferType.SERVER_TO_SERVER and the destination panel reference
                 progress_callback=lambda tid, tr, tt: self.signal_bridge.update_progress(
-                    tid, tr, tt, TransferType.SERVER_TO_SERVER, self.destination_panel)
+                    tid, tr, tt, TransferType.SERVER_TO_SERVER, self.destination_panel),
+                overwrite_callback=s2s_overwrite_callback
             )
 
             if transfer_id:

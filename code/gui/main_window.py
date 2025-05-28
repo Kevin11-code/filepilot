@@ -50,7 +50,12 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.auth_manager = AuthManager()
-        self.transfer_manager = TransferManager()
+        
+        # Initialize logger first
+        self.setup_logger()
+        
+        # Pass logger to transfer manager
+        self.transfer_manager = TransferManager(logger=self.logger)
         self.sftp_client = None
         
         # Dictionary to track downloads and their destination paths
@@ -75,7 +80,6 @@ class MainWindow(QMainWindow):
         self.current_mode = "local_to_server" # Initial mode
 
         self.setup_ui()
-        self.setup_logger()
         
         # Start transfer manager
         self.transfer_manager.start()
@@ -474,11 +478,22 @@ class MainWindow(QMainWindow):
         if reply != QMessageBox.Yes:
             return
         
+        # Create overwrite callback for upload
+        def upload_overwrite_callback(remote_file_path):
+            reply = QMessageBox.question(
+                self, "File Exists",
+                f"The file '{os.path.basename(remote_file_path)}' already exists on the remote server.\n\n"
+                f"Remote path: {remote_file_path}\n\n"
+                "Do you want to overwrite it?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            return reply == QMessageBox.Yes
+        
         # Start the transfer using the signal bridge for thread-safe callbacks
         transfer_id = self.transfer_manager.upload_file(
             source_full_path, destination_full_path, 
             # Pass TransferType.UPLOAD and a reference to the remote_panel
-            lambda tid, tr, tt: self.signal_bridge.update_progress(tid, tr, tt, TransferType.UPLOAD, self.remote_panel))
+            lambda tid, tr, tt: self.signal_bridge.update_progress(tid, tr, tt, TransferType.UPLOAD, self.remote_panel),
+            upload_overwrite_callback)
         
         if transfer_id:
             # Track the upload with its destination path (for refresh)
@@ -524,10 +539,21 @@ class MainWindow(QMainWindow):
         if reply != QMessageBox.Yes:
             return
         
+        # Create overwrite callback for download
+        def download_overwrite_callback(local_file_path):
+            reply = QMessageBox.question(
+                self, "File Exists",
+                f"The file '{os.path.basename(local_file_path)}' already exists locally.\n\n"
+                f"Local path: {local_file_path}\n\n"
+                "Do you want to overwrite it?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            return reply == QMessageBox.Yes
+        
         # Start the transfer using the signal bridge for thread-safe callbacks
         transfer_id = self.transfer_manager.download_file(
                 source_full_path, destination_full_path, 
-                lambda tid, tr, tt: self.signal_bridge.update_progress(tid, tr, tt, TransferType.DOWNLOAD, None))
+                lambda tid, tr, tt: self.signal_bridge.update_progress(tid, tr, tt, TransferType.DOWNLOAD, None),
+                download_overwrite_callback)
             
         if transfer_id:
             # Track the download with its destination path
@@ -537,7 +563,7 @@ class MainWindow(QMainWindow):
             # Force immediate update of the transfer panel
             self.transfer_panel.update_transfers()
         else:
-            QMessageBox.critical(self, "Download Failed", "Failed to start download.") #
+            QMessageBox.critical(self, "Download Failed", "Failed to start download.")
     
     def upload_file(self):
         """Upload a file or directory to the remote server (only in local-to-server mode)."""
