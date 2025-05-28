@@ -20,7 +20,7 @@ from code.gui.conn_dialog import ConnectionDialog
 from code.gui.file_panel import FilePanel
 from code.gui.transfer_panel import TransferPanel
 from code.gui.conn_manager import ConnectionManagerDialog
-from code.gui.server_to_server_panel import ServerToServerPanel # Import the new panel
+from code.gui.server_to_server_panel import ServerToServerPanel, DualPanelWidget, LocalToServerPanel # Import the new classes
 
 
 class TransferSignalBridge(QObject):
@@ -154,25 +154,16 @@ class MainWindow(QMainWindow):
         splitter = QSplitter(Qt.Vertical)
         splitter.setHandleWidth(6)  # Wider handle for easier resizing
         
-        # --- Local to Server Widget (contains local and one remote panel) ---
-        self.local_to_server_widget = QWidget()
-        local_server_layout = QHBoxLayout(self.local_to_server_widget)
-        local_server_layout.setContentsMargins(0, 0, 0, 0)
-        local_server_layout.setSpacing(6)
-        
-        local_server_layout.addWidget(self.local_panel) #
-        
-        # Add a vertical separator
-        separator = QFrame()
-        separator.setFrameShape(QFrame.VLine)
-        separator.setFrameShadow(QFrame.Sunken)
-        local_server_layout.addWidget(separator)
-        
-        local_server_layout.addWidget(self.remote_panel) #
-        
+        # --- Use the new LocalToServerPanel class instead of manual layout ---
+        self.local_to_server_widget = LocalToServerPanel(
+            parent=self,
+            local_panel=self.local_panel,
+            remote_panel=self.remote_panel
+        )
+
         # Connect item selection signals for local-to-server mode
-        self.local_panel.itemSelected.connect(self.local_item_selected) #
-        self.remote_panel.itemSelected.connect(self.remote_item_selected) #
+        self.local_panel.itemSelected.connect(self.local_item_selected)
+        self.remote_panel.itemSelected.connect(self.remote_item_selected)
 
         # --- Stacked Widget for different transfer modes ---
         self.transfer_mode_stacked_widget = QStackedWidget()

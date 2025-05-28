@@ -12,13 +12,49 @@ from code.core.sftp_client import SFTPClient
 from code.core.transfer_manager import TransferManager, TransferType
 from code.utils.secure_string import SecureTemporaryCredentials
 
-class ServerToServerPanel(QWidget):
+
+class DualPanelWidget(QWidget):
+    """
+    Base class for dual-panel layouts with equal spacing.
+    Provides common layout structure that can be reused.
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setup_base_layout()
+    
+    def setup_base_layout(self):
+        """Set up the base dual-panel layout with equal spacing."""
+        self.main_layout = QHBoxLayout(self)
+        self.main_layout.setContentsMargins(0, 0, 0, 0)
+        self.main_layout.setSpacing(6)
+        
+        # Will be populated by subclasses
+        self.left_layout = QVBoxLayout()
+        self.left_layout.setContentsMargins(0, 0, 0, 0)
+        self.left_layout.setSpacing(5)
+        
+        self.right_layout = QVBoxLayout()  
+        self.right_layout.setContentsMargins(0, 0, 0, 0)
+        self.right_layout.setSpacing(5)
+        
+        # Add layouts with equal stretch factors for 50/50 split
+        self.main_layout.addLayout(self.left_layout, 1)
+        
+        # Add separator
+        separator = QFrame()
+        separator.setFrameShape(QFrame.VLine)
+        separator.setFrameShadow(QFrame.Sunken)
+        self.main_layout.addWidget(separator, 0)
+        
+        self.main_layout.addLayout(self.right_layout, 1)
+
+
+class ServerToServerPanel(DualPanelWidget):
     """
     Panel for managing server-to-server file transfers.
     Contains two FilePanel instances for source and destination servers.
     """
     def __init__(self, parent=None, auth_manager: AuthManager = None, transfer_manager: TransferManager = None, signal_bridge=None):
-        super().__init__(parent)
         self.auth_manager = auth_manager
         self.transfer_manager = transfer_manager
         self.signal_bridge = signal_bridge # For connecting to transfer progress updates
@@ -26,49 +62,28 @@ class ServerToServerPanel(QWidget):
         self.source_client = None
         self.dest_client = None
 
-        self.setup_ui()
+        super().__init__(parent)  # This calls setup_base_layout
+        self.setup_panels()
 
-    def setup_ui(self):
-        """Set up the dual-panel UI for server-to-server transfers."""
-        main_layout = QHBoxLayout(self)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(6)
-
+    def setup_panels(self):
+        """Set up the server-to-server specific panels."""
         # Source Server Panel
-        source_group_layout = QVBoxLayout()
-        source_group_layout.setContentsMargins(0, 0, 0, 0)
-        source_group_layout.setSpacing(5)
-
         source_label = QLabel("Source Server:")
         source_label.setStyleSheet("font-weight: bold; font-size: 10pt;")
-        source_group_layout.addWidget(source_label)
+        self.left_layout.addWidget(source_label)
 
         self.source_panel = FilePanel(is_remote=True)
-        # Connect the itemSelected signal to handle transfers
         self.source_panel.itemSelected.connect(self.source_item_selected)
-        source_group_layout.addWidget(self.source_panel)
-        main_layout.addLayout(source_group_layout)
-
-        # Add a vertical separator
-        separator = QFrame()
-        separator.setFrameShape(QFrame.VLine)
-        separator.setFrameShadow(QFrame.Sunken)
-        main_layout.addWidget(separator)
+        self.left_layout.addWidget(self.source_panel)
 
         # Destination Server Panel
-        dest_group_layout = QVBoxLayout()
-        dest_group_layout.setContentsMargins(0, 0, 0, 0)
-        dest_group_layout.setSpacing(5)
-
         dest_label = QLabel("Destination Server:")
         dest_label.setStyleSheet("font-weight: bold; font-size: 10pt;")
-        dest_group_layout.addWidget(dest_label)
+        self.right_layout.addWidget(dest_label)
 
         self.destination_panel = FilePanel(is_remote=True)
-        # itemSelected on destination panel is primarily for navigation within that panel
         self.destination_panel.itemSelected.connect(self.dest_item_selected)
-        dest_group_layout.addWidget(self.destination_panel)
-        main_layout.addLayout(dest_group_layout)
+        self.right_layout.addWidget(self.destination_panel)
 
         # Initialize connection lists for both panels
         self.refresh_connections()
@@ -194,3 +209,30 @@ class ServerToServerPanel(QWidget):
         # Optionally, connect to the currently selected connections if they exist
         # This would require more sophisticated logic to remember previous selections
         # For now, just ensure the dropdowns are populated.
+
+
+class LocalToServerPanel(DualPanelWidget):
+    """
+    Panel for managing local-to-server file transfers.
+    Contains one local FilePanel and one remote FilePanel.
+    """
+    def __init__(self, parent=None, local_panel=None, remote_panel=None):
+        self.local_panel = local_panel
+        self.remote_panel = remote_panel
+        
+        super().__init__(parent)  # This calls setup_base_layout
+        self.setup_panels()
+
+    def setup_panels(self):
+        """Set up the local-to-server specific panels."""
+        # Left side - Local Panel with heading
+        local_label = QLabel("Local Files:")
+        local_label.setStyleSheet("font-weight: bold; font-size: 10pt;")
+        self.left_layout.addWidget(local_label)
+        self.left_layout.addWidget(self.local_panel)
+
+        # Right side - Remote Panel  
+        remote_label = QLabel("Remote Server:")
+        remote_label.setStyleSheet("font-weight: bold; font-size: 10pt;")
+        self.right_layout.addWidget(remote_label)
+        self.right_layout.addWidget(self.remote_panel)
