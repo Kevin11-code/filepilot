@@ -296,7 +296,8 @@ class SFTPClient:
                         return False
             
             file_size = os.path.getsize(local_path)
-            chunk_size = max(file_size // chunks, 1024)  # Ensure minimum chunk size
+            # chunk_size = max(file_size // chunks, 1024)  # Ensure minimum chunk size
+            chunk_size = 64 * 1024  
             
             self.logger.info(f"Starting upload: '{local_path}' -> '{remote_path}'")
             self.logger.info(f"File Size: {file_size} bytes (~{file_size / (1024**3):.2f} GB), Chunk Size: {chunk_size} bytes")
