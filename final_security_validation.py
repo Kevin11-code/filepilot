@@ -150,7 +150,7 @@ def comprehensive_security_test():
     print("2️⃣  Testing AuthManager Secure Storage")
     print("-" * 50)
     
-    from core.auth_manager import AuthManager
+    from code.core.auth_manager import AuthManager
     
     config_dir = tempfile.mkdtemp()
     auth_manager = AuthManager(config_dir)

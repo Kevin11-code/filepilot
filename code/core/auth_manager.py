@@ -10,7 +10,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 # Import secure string management from utils
-from ..utils.secure_string import SecureString, SecureCredentialManager, get_credential_manager
+from code.utils.secure_string import SecureString, SecureCredentialManager, get_credential_manager
 
 
 class AuthManager:
