@@ -3,6 +3,7 @@ from PyQt5.QtWidgets import (
     QTreeView, QHeaderView, QAbstractItemView, QMenu, QAction, QInputDialog,
     QMessageBox, QDialog, QDialogButtonBox, QFormLayout, QComboBox, QCompleter, QStyle
 )
+from PyQt5.QtGui import QIcon
 from PyQt5.QtCore import Qt, QTimer, QModelIndex, QUrl, QSize, QDir, pyqtSignal
 from PyQt5.QtGui import QStandardItemModel, QStandardItem, QDesktopServices, QIcon
 
@@ -69,18 +70,14 @@ class FilePanel(QWidget):
         self.go_button.clicked.connect(self.go_to_path)
         path_bar_layout.addWidget(self.go_button)
 
-        self.refresh_button = QPushButton(self.style().standardIcon(QStyle.SP_BrowserReload), "")
+        self.refresh_button = QPushButton(QIcon("resources/icons/refresh.svg"), "")
         self.refresh_button.setToolTip("Refresh Directory")
         self.refresh_button.clicked.connect(self.refresh)
-        self.refresh_button.setFixedSize(QSize(28, 28))
-        self.refresh_button.setIconSize(QSize(20, 20))
         path_bar_layout.addWidget(self.refresh_button)
 
-        self.up_button = QPushButton(self.style().standardIcon(QStyle.SP_ArrowUp), "")
+        self.up_button = QPushButton(QIcon("resources/icons/back.svg"), "")
         self.up_button.setToolTip("Go Up Directory")
         self.up_button.clicked.connect(self.go_up_directory)
-        self.up_button.setFixedSize(QSize(28, 28))
-        self.up_button.setIconSize(QSize(20, 20))
         path_bar_layout.addWidget(self.up_button)
 
         main_layout.addLayout(path_bar_layout)
