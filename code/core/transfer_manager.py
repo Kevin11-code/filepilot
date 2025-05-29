@@ -72,6 +72,9 @@ class TransferItem:
         self._overwrite_callback = overwrite_callback # Stored here
         self.source_hash = None # To store source file hash
         self.destination_hash = None # To store destination file hash
+        self.pause_event = threading.Event()
+        self.pause_event.set()  # Start as not paused
+        self.cancel_event = threading.Event()
 
         
     def __lt__(self, other):
@@ -309,6 +312,7 @@ class TransferManager:
             if transfer_id in self.active_transfers:
                 transfer = self.active_transfers[transfer_id]
                 transfer.status = TransferStatus.PAUSED
+                transfer.pause_event.clear()
                 self.logger.info(f"Transfer paused: {transfer_id}")
                 return True
         
@@ -338,6 +342,7 @@ class TransferManager:
                 transfer = self.active_transfers[transfer_id]
                 if transfer.status == TransferStatus.PAUSED:
                     transfer.status = TransferStatus.IN_PROGRESS
+                    transfer.pause_event.set()
                     self.logger.info(f"Active transfer resumed: {transfer_id}")
                     return True
                     
@@ -370,6 +375,8 @@ class TransferManager:
             if transfer_id in self.active_transfers:
                 transfer = self.active_transfers[transfer_id]
                 transfer.status = TransferStatus.CANCELED
+                transfer.cancel_event.set()
+                transfer.cancel_event.set()
                 self.logger.info(f"Active transfer canceled: {transfer_id}")
                 canceled = True
                 
@@ -509,7 +516,7 @@ class TransferManager:
                         completed_transfers = []
                         for transfer_id, transfer in self.active_transfers.items():
                             if transfer.status in [TransferStatus.COMPLETED, TransferStatus.FAILED, 
-                                                 TransferStatus.CANCELED, TransferStatus.PAUSED]:
+                                                 TransferStatus.CANCELED]:
                                 completed_transfers.append(transfer_id)
                         
                         for transfer_id in completed_transfers:
@@ -600,6 +607,10 @@ class TransferManager:
             transfer.status = TransferStatus.IN_PROGRESS
             transfer.start_time = time.time()
 
+            # --- PAUSE/RESUME SUPPORT: Wait here if paused before starting ---
+            while not transfer.pause_event.is_set():
+                time.sleep(0.2)
+
             # --- STEP 1: Calculate Source File Hash ---
             source_hash = None
             if transfer.transfer_type == TransferType.UPLOAD:
@@ -671,6 +682,14 @@ class TransferManager:
                         except Exception as e:
                             self.logger.error(f"Error in transfer {transfer.id} progress callback: {str(e)}")
                     
+                    # --- PAUSE/RESUME SUPPORT: Wait here if paused during transfer ---
+                    while not transfer.pause_event.is_set():
+                        time.sleep(0.2)
+
+                    if transfer.cancel_event.is_set():
+                        transfer.status = TransferStatus.CANCELED
+                        self.logger.info(f"Transfer {transfer.id} canceled before starting transfer.")
+                        return
                     # Check if transfer was canceled or paused
                     if transfer.status in [TransferStatus.CANCELED, TransferStatus.PAUSED]:
                         raise InterruptedError("Transfer was canceled or paused")
@@ -706,6 +725,10 @@ class TransferManager:
                     upload_overwrite_callback
                 )
                     
+                if transfer.cancel_event.is_set():
+                    transfer.status = TransferStatus.CANCELED
+                    self.logger.info(f"Transfer {transfer.id} canceled after upload_file call.")
+                    return
                 if not result:
                     transfer.status = TransferStatus.FAILED
                     transfer.error_message = "Upload failed"
@@ -731,7 +754,10 @@ class TransferManager:
                     download_overwrite_callback
                 )
 
-                    
+                if transfer.cancel_event.is_set():
+                    transfer.status = TransferStatus.CANCELED
+                    self.logger.info(f"Transfer {transfer.id} canceled after download_file call.")
+                    return  
                 if not result:
                     transfer.status = TransferStatus.FAILED
                     transfer.error_message = "Download failed"
@@ -766,7 +792,10 @@ class TransferManager:
                     progress_callback=sftp_progress_wrapper,
                     overwrite_callback=s2s_overwrite_callback
                 )
-
+                if transfer.cancel_event.is_set():
+                    transfer.status = TransferStatus.CANCELED
+                    self.logger.info(f"Transfer {transfer.id} canceled after server_to_server_transfer call.")
+                    return
                 # Server to server using buffer of our machine, does not store on disk
                 # result = client.stream_remote_to_remote(
                 #     source_client,

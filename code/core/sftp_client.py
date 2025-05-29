@@ -413,7 +413,8 @@ class SFTPClient:
                     remote_path: str, 
                     chunks: int = 10, 
                     progress_callback: Callable[[float, float, float], None] = None,
-                    overwrite_callback: Callable[[str], bool] = None) -> bool:
+                    overwrite_callback: Callable[[str], bool] = None,
+                    should_abort: Callable[[], bool]= None) -> bool:
         """
         Upload a file to the SFTP server with chunking and progress reporting.
         
@@ -465,6 +466,10 @@ class SFTPClient:
             # Check if remote file already exists and ask for overwrite confirmation
             try:
                 existing_stat = self.sftp.stat(remote_path)
+            except FileNotFoundError:
+                # File doesn't exist, safe to upload
+                pass
+            else:
                 # File exists, check if we should overwrite
                 if overwrite_callback:
                     if not overwrite_callback(remote_path):
@@ -472,12 +477,6 @@ class SFTPClient:
                         return False
                 else:
                     self.logger.warning(f"Remote file exists but no overwrite callback provided: {remote_path}")
-                    # Continue with upload if no callback is provided (backward compatibility)
-            except FileNotFoundError:
-                # File doesn't exist, safe to upload
-                pass
-            except Exception as e:
-                self.logger.warning(f"Error checking if remote file exists: {str(e)}")
             
             # Check if remote directory exists, and create it if it doesn't exist
             remote_dir = os.path.dirname(remote_path)
@@ -545,6 +544,9 @@ class SFTPClient:
                         last_log_time = start_time
                         
                         while True:
+                            if should_abort and should_abort():
+                                self.logger.info("Upload aborted by user.")
+                                return False
                             chunk_data = local_file.read(chunk_size)
                             if not chunk_data:
                                 break
@@ -676,7 +678,8 @@ class SFTPClient:
                       local_path: str, 
                       chunks: int = 10, 
                       progress_callback: Callable[[float, float, float], None] = None,
-                      overwrite_callback: Callable[[str], bool] = None) -> bool:
+                      overwrite_callback: Callable[[str], bool] = None,
+                      should_abort: Callable[[], bool] = None) -> bool:
         """
         Download a file from the SFTP server with chunking and progress reporting.
         
@@ -727,6 +730,9 @@ class SFTPClient:
                     last_log_time = start_time
                     
                     while True:
+                        if should_abort and should_abort():
+                            self.logger.info("Download aborted by user.")
+                            return False
                         chunk_data = remote_file.read(chunk_size)
                         if not chunk_data:
                             break
@@ -773,7 +779,8 @@ class SFTPClient:
                                   temp_path: str = None,
                                   chunks: int = 10,
                                   progress_callback: Callable[[float, float, float], None] = None,
-                                  overwrite_callback: Callable[[str], bool] = None) -> bool:
+                                  overwrite_callback: Callable[[str], bool] = None,
+                                  should_abort: Callable[[],bool] = None) -> bool:
         """
         Transfer a file from one server to another via the local system as an intermediary.
         Uses secure temporary file handling to prevent credential exposure.
@@ -828,15 +835,29 @@ class SFTPClient:
                     return False
                 
             self.logger.info(f"Downloading from source server to secure temp location: {temp_path}")
+
+            if should_abort and should_abort():
+                self.logger.info("Transfer aborted by user before download started.")
+                return False
+
             download_result = source_client.download_file(
-                source_path, temp_path, chunks, 
-                lambda bytes_t, total, percent: progress_callback(bytes_t, total, percent/2) if progress_callback else None
+                source_path, 
+                temp_path, 
+                chunks, 
+                lambda bytes_t, total, percent: progress_callback(bytes_t, total, percent/2) if progress_callback else None,
+                overwrite_callback,
+                should_abort
             )
             source_client.disconnect()
             
             if not download_result:
                 self.logger.error("Failed to download from source server")
                 return False
+
+            if should_abort and should_abort():
+                self.logger.info("Transfer aborted by user after download, before upload.")
+                return False
+        except Exception as e:
                     
             # Connect to destination server and upload
             dest_client = SFTPClient(logger=self.logger)
@@ -852,10 +873,17 @@ class SFTPClient:
                     return False
                 
             self.logger.info(f"Uploading from secure temp location to destination server: {dest_path}")
+
+            if should_abort and should_abort():
+                self.logger.info("Transfer aborted by user before upload started.")
+                return False
+
             upload_result = dest_client.upload_file(
                 temp_path, dest_path, chunks,
                 lambda bytes_t, total, percent: progress_callback(bytes_t, total, 50 + percent/2) if progress_callback else None,
-                overwrite_callback
+                overwrite_callback,
+                should_abort
+
             )
             dest_client.disconnect()
             

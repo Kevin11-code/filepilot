@@ -369,7 +369,7 @@ class TransferPanel(QWidget):
                     text-align: center;
                     font-size: 11px;
                     height: 14px;
-                    background-color: ##00FF00;
+                    background-color: #00FF00;
                 }
                 QProgressBar::chunk {
                     background-color: #1a1a1a;
