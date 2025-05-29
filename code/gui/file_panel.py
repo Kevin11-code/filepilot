@@ -188,9 +188,8 @@ class FilePanel(QWidget):
                 self.path_edit.setText(self.current_path)
                 QMessageBox.information(self, "Connected", f"Successfully connected to {conn_name}.")
             else:
-                QMessageBox.critical(self, "Connection Failed", "SFTPClient.connect() returned False.")
-                self.set_client(None)
-                
+                QMessageBox.critical(self, "Connection Failed", "Could not connect to remote server.")
+                self.set_client(None) # Ensure client is None on failure
         except Exception as e:
             QMessageBox.critical(self, "Connection Failed", f"Failed to connect: {e}")
             self.set_client(None)
@@ -226,24 +225,24 @@ class FilePanel(QWidget):
                 # SFTPClient.list_directory now returns paramiko.SFTPAttributes objects directly
                 files = self.client.list_directory(path)
                 
-                # --- DEBUG PRINTS ---
-                print(f"--- Debugging remote directory listing for path: {path} ---")
-                if files:
-                    print(f"First file object type: {type(files[0])}")
-                    print(f"Attributes of first file object: {dir(files[0])}")
-                    # Attempt to access owner_name and group_name with a try-except
-                    try:
-                        print(f"First file owner_name: {getattr(files[0], 'owner_name', 'N/A')}")
-                    except AttributeError:
-                        print("First file object has no 'owner_name' attribute (caught by direct access attempt).")
-                    try:
-                        print(f"First file group_name: {getattr(files[0], 'group_name', 'N/A')}")
-                    except AttributeError:
-                        print("First file object has no 'group_name' attribute (caught by direct access attempt).")
-                else:
-                    print("No files found or directory is empty.")
-                print("-------------------------------------------------------")
-                # --- END DEBUG PRINTS ---
+                # # --- DEBUG PRINTS ---
+                # print(f"--- Debugging remote directory listing for path: {path} ---")
+                # if files:
+                #     print(f"First file object type: {type(files[0])}")
+                #     print(f"Attributes of first file object: {dir(files[0])}")
+                #     # Attempt to access owner_name and group_name with a try-except
+                #     try:
+                #         print(f"First file owner_name: {getattr(files[0], 'owner_name', 'N/A')}")
+                #     except AttributeError:
+                #         print("First file object has no 'owner_name' attribute (caught by direct access attempt).")
+                #     try:
+                #         print(f"First file group_name: {getattr(files[0], 'group_name', 'N/A')}")
+                #     except AttributeError:
+                #         print("First file object has no 'group_name' attribute (caught by direct access attempt).")
+                # else:
+                #     print("No files found or directory is empty.")
+                # print("-------------------------------------------------------")
+                # # --- END DEBUG PRINTS ---
 
             else:
                 files = self.get_local_directory_contents(path)

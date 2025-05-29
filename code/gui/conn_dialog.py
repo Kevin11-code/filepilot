@@ -1,6 +1,7 @@
 from PyQt5.QtWidgets import QDialog, QVBoxLayout, QFormLayout, QLineEdit, QSpinBox, QComboBox, QPushButton, QHBoxLayout, QCheckBox, QDialogButtonBox, QFileDialog, QMessageBox
 from code.core.auth_manager import AuthManager
 from code.core.sftp_client import SFTPClient
+from code.utils.secure_string import SecureTemporaryCredentials
 
 class ConnectionDialog(QDialog):
     """Dialog for creating and editing SFTP connections"""
@@ -201,11 +202,12 @@ class ConnectionDialog(QDialog):
                 
         # Try to connect
         try:
-            if client.connect(**params):
-                client.disconnect()
-                QMessageBox.information(self, "Success", "Connection successful!")
-            else:
-                QMessageBox.critical(self, "Error", "Connection failed.")
+            with SecureTemporaryCredentials(params) as temp_params:
+                if client.connect(**temp_params):
+                    client.disconnect()
+                    QMessageBox.information(self, "Success", "Connection successful!")
+                else:
+                    QMessageBox.critical(self, "Error", "Connection failed.")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Connection error: {str(e)}")
     
