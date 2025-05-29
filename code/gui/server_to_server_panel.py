@@ -153,7 +153,9 @@ class ServerToServerPanel(DualPanelWidget):
 
         # Get connection configs for transfer manager
         source_conn_name = self.source_panel.conn_combo.currentText()
+        # print("S: ", source_conn_name)
         dest_conn_name = self.destination_panel.conn_combo.currentText()
+        # print("D: ", dest_conn_name)
         
         source_config = self.auth_manager.get_connection_secure(source_conn_name)
         dest_config = self.auth_manager.get_connection_secure(dest_conn_name)
@@ -198,7 +200,7 @@ class ServerToServerPanel(DualPanelWidget):
         # This panel's item selection doesn't initiate a transfer directly,
         # but it could be used for context menu actions like "Create New Folder" etc.
         # For now, just log or provide a placeholder.
-        print(f"Destination item selected: {path}, is_dir: {is_dir}")
+        # print(f"Destination item selected: {path}, is_dir: {is_dir}")
 
     def disconnect_all(self):
         """Disconnect both source and destination SFTP clients."""

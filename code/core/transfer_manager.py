@@ -2,6 +2,7 @@ import os
 import time
 import logging
 import threading
+import hashlib # Added for SHA-256 hash calculation
 import gc
 import secrets
 from typing import Dict, List, Callable, Optional, Tuple
@@ -69,6 +70,9 @@ class TransferItem:
         self.transfer_rate = 0.0
         self._progress_callback = progress_callback # Stored here
         self._overwrite_callback = overwrite_callback # Stored here
+        self.source_hash = None # To store source file hash
+        self.destination_hash = None # To store destination file hash
+
         
     def __lt__(self, other):
         """Compare transfers based on priority for the priority queue."""
@@ -98,7 +102,9 @@ class TransferItem:
             'total': f"{total_mb:.2f} MB",
             'rate': f"{self.transfer_rate:.2f} MB/s",
             'elapsed_time': f"{elapsed_time:.1f}s",
-            'error': self.error_message
+            'error': self.error_message,
+            'source_hash': self.source_hash if self.source_hash else "N/A", # Include hashes in dict
+            'destination_hash': self.destination_hash if self.destination_hash else "N/A"
         }
 
 class TransferManager:
@@ -523,6 +529,31 @@ class TransferManager:
                     
             # Sleep briefly to prevent CPU thrashing, but check frequently for new slots
             time.sleep(0.2)
+
+    def _calculate_local_file_sha256(self, file_path: str) -> Optional[str]:
+        """
+        Calculates the SHA-256 hash of a local file.
+
+        Args:
+            file_path: Path to the local file.
+
+        Returns:
+            str: The SHA-256 hash of the file if successful, None otherwise.
+        """
+        sha256_hash = hashlib.sha256()
+        try:
+            with open(file_path, "rb") as f:
+                # Read and update hash string value in blocks of 4K
+                for byte_block in iter(lambda: f.read(4096), b""):
+                    sha256_hash.update(byte_block)
+            return sha256_hash.hexdigest()
+        except FileNotFoundError:
+            self.logger.error(f"Local file not found for hash calculation: {file_path}")
+            return None
+        except Exception as e:
+            self.logger.error(f"Error calculating local file SHA-256 for {file_path}: {str(e)}")
+            return None
+        
             
     def _process_transfer(self, transfer: TransferItem):
         """
@@ -532,108 +563,96 @@ class TransferManager:
         Args:
             transfer: The transfer item to process
         """
+
+        source_client = None
+        dest_client = None
+
+        source_config = None
+        dest_config = None
+
+        # Connect based on transfer type - handle SecureString passwords
+        if transfer.transfer_type == TransferType.UPLOAD or transfer.transfer_type == TransferType.SERVER_TO_SERVER:
+            dest_client = SFTPClient(logger=self.logger)
+            dest_config = transfer.dest_config.copy()
+            dest_config.pop('name', None)
+            dest_config.pop('has_password', None)
+            dest_config.pop('has_passphrase', None) # Also remove has_passphrase
+            # Convert SecureString to plain string for connection
+            if 'password' in dest_config and hasattr(dest_config['password'], 'get_value'):
+                dest_config['password'] = dest_config['password'].get_value()
+            if 'passphrase' in dest_config and hasattr(dest_config['passphrase'], 'get_value'):
+                dest_config['passphrase'] = dest_config['passphrase'].get_value()
+            
+        if transfer.transfer_type == TransferType.DOWNLOAD or transfer.transfer_type == TransferType.SERVER_TO_SERVER:
+            source_client = SFTPClient(logger=self.logger)
+            source_config = transfer.source_config.copy()
+            source_config.pop('name', None)
+            source_config.pop('has_password', None)
+            source_config.pop('has_passphrase', None) # Also remove has_passphrase
+            # Convert SecureString to plain string for connection
+            if 'password' in source_config and hasattr(source_config['password'], 'get_value'):
+                source_config['password'] = source_config['password'].get_value()
+            if 'passphrase' in source_config and hasattr(source_config['passphrase'], 'get_value'):
+                source_config['passphrase'] = source_config['passphrase'].get_value()
+
         try:
             # Mark as started
             transfer.status = TransferStatus.IN_PROGRESS
             transfer.start_time = time.time()
-            
-            # Always create a new SFTP client for each transfer to avoid concurrency issues
-            client = None
-            
-            try:
-                client = SFTPClient(logger=self.logger)
-                
-                # Connect based on transfer type - use secure credential handling
-                if transfer.transfer_type == TransferType.UPLOAD:
-                    config = transfer.dest_config.copy()
-                    
-                    # Check if we should use the active connection's credentials
-                    if config.get('host') == 'active_connection':
-                        # Get credentials from the active connection
-                        try:
-                            from PyQt5.QtWidgets import QApplication
-                            main_window = None
-                            
-                            # Find main window instance
-                            for widget in QApplication.topLevelWidgets():
-                                if widget.__class__.__name__ == 'MainWindow':
-                                    main_window = widget
-                                    break
-                            
-                            if main_window and hasattr(main_window, 'remote_panel'):
-                                remote_panel = main_window.remote_panel
-                                if remote_panel.client and remote_panel.client.connection_config:
-                                    # Use the connection config from the active connection
-                                    config = remote_panel.client.connection_config.copy()
-                                    self.logger.info(f"Using existing SFTP connection config for transfer {transfer.id}")
-                                else:
-                                    transfer.status = TransferStatus.FAILED
-                                    transfer.error_message = "No active SFTP connection available"
-                                    return
-                            else:
-                                transfer.status = TransferStatus.FAILED
-                                transfer.error_message = "No main window or remote panel found"
-                                return
-                        except Exception as e:
-                            transfer.status = TransferStatus.FAILED
-                            transfer.error_message = f"Failed to get active connection config: {str(e)}"
-                            return
-                    
-                    # Use secure context manager for credential extraction
-                    with SecureTemporaryCredentials(config) as temp_params:
-                        if not client.connect(**temp_params):
-                            transfer.status = TransferStatus.FAILED
-                            transfer.error_message = "Failed to connect to destination server"
-                            return
-                    
-                elif transfer.transfer_type == TransferType.DOWNLOAD:
-                    config = transfer.source_config.copy()
-                    
-                    # Check if we should use the active connection's credentials
-                    if config.get('host') == 'active_connection':
-                        # Get credentials from the active connection
-                        try:
-                            from PyQt5.QtWidgets import QApplication
-                            main_window = None
-                            
-                            # Find main window instance
-                            for widget in QApplication.topLevelWidgets():
-                                if widget.__class__.__name__ == 'MainWindow':
-                                    main_window = widget
-                                    break
-                            
-                            if main_window and hasattr(main_window, 'remote_panel'):
-                                remote_panel = main_window.remote_panel
-                                if remote_panel.client and remote_panel.client.connection_config:
-                                    # Use the connection config from the active connection
-                                    config = remote_panel.client.connection_config.copy()
-                                    self.logger.info(f"Using existing SFTP connection config for transfer {transfer.id}")
-                                else:
-                                    transfer.status = TransferStatus.FAILED
-                                    transfer.error_message = "No active SFTP connection available"
-                                    return
-                            else:
-                                transfer.status = TransferStatus.FAILED
-                                transfer.error_message = "No main window or remote panel found"
-                                return
-                        except Exception as e:
-                            transfer.status = TransferStatus.FAILED
-                            transfer.error_message = f"Failed to get active connection config: {str(e)}"
-                            return
-                    
-                    # Use secure context manager for credential extraction
-                    with SecureTemporaryCredentials(config) as temp_params:
-                        if not client.connect(**temp_params):
-                            transfer.status = TransferStatus.FAILED
-                            transfer.error_message = "Failed to connect to source server"
-                            return
-                            
-            except Exception as e:
-                transfer.status = TransferStatus.FAILED
-                transfer.error_message = f"Failed to create SFTP client: {str(e)}"
-                self.logger.error(f"Transfer {transfer.id} failed to create client: {str(e)}")
-                return
-            
+
+            # --- STEP 1: Calculate Source File Hash ---
+            source_hash = None
+            if transfer.transfer_type == TransferType.UPLOAD:
+                # Local file hash
+                source_hash = self._calculate_local_file_sha256(transfer.source_path)
+                if source_hash is None:
+                    transfer.status = TransferStatus.FAILED
+                    transfer.error_message = f"Failed to calculate SHA-256 for local source file: {transfer.source_path}"
+                    self.logger.error(transfer.error_message)
+                    return
+                transfer.source_hash = source_hash
+                self.logger.info(f"Local source hash for {transfer.source_path}: {source_hash}")
+                pass
+
+            elif transfer.transfer_type == TransferType.DOWNLOAD:
+                # Remote source hash
+                with SecureTemporaryCredentials(source_config) as temp_params:
+                    if not source_client.connect(**temp_params):
+                        transfer.status = TransferStatus.FAILED
+                        transfer.error_message = "Failed to connect to source server"
+                        self.logger.error(transfer.error_message)
+                        return
+                source_hash = source_client.get_remote_file_sha256(transfer.source_path)
+                if source_hash is None:
+                    transfer.status = TransferStatus.FAILED
+                    transfer.error_message = f"Failed to calculate SHA-256 for remote source file: {transfer.source_path}"
+                    self.logger.error(transfer.error_message)
+                    return
+                transfer.source_hash = source_hash
+                self.logger.info(f"Remote source hash for {transfer.source_path}: {source_hash}")
+                pass
+
+            elif transfer.transfer_type == TransferType.SERVER_TO_SERVER:
+                with SecureTemporaryCredentials(source_config) as temp_params:
+                    if not source_client.connect(**temp_params):
+                        transfer.status = TransferStatus.FAILED
+                        transfer.error_message = "Failed to connect to source server"
+                        self.logger.error(transfer.error_message)
+                        return
+                source_hash = source_client.get_remote_file_sha256(transfer.source_path)
+                if source_hash is None:
+                    transfer.status = TransferStatus.FAILED
+                    transfer.error_message = f"Failed to calculate SHA-256 for remote source file (S2S): {transfer.source_path}"
+                    self.logger.error(transfer.error_message)
+                    return
+                transfer.source_hash = source_hash
+                self.logger.info(f"Remote source hash for {transfer.source_path}: {source_hash}")
+                pass
+
+
+            # --- STEP 2: Perform the actual file transfer ---
+            result = False
+
             # Progress callback wrapper for SFTPClient
             def sftp_progress_wrapper(bytes_transferred, total_bytes, percent):
                 try:
@@ -659,96 +678,174 @@ class TransferManager:
                     self.logger.error(f"Error in progress wrapper for transfer {transfer.id}: {str(e)}")
             
             # Process based on transfer type with isolated error handling
-            try:
-                if transfer.transfer_type == TransferType.UPLOAD:
-                    # Upload file with overwrite callback
-                    def upload_overwrite_callback(remote_path):
-                        # For non-GUI transfers, we'll log and return True (allow overwrite)
-                        # GUI transfers will provide their own callback
-                        if hasattr(transfer, '_overwrite_callback') and transfer._overwrite_callback:
-                            return transfer._overwrite_callback(remote_path)
-                        else:
-                            self.logger.warning(f"File exists on remote server, proceeding with overwrite: {remote_path}")
-                            return True
-                    
-                    result = client.upload_file(
-                        transfer.source_path, 
-                        transfer.dest_path,
-                        transfer.chunks,
-                        sftp_progress_wrapper,
-                        upload_overwrite_callback
-                    )
-                    
-                    if result:
-                        transfer.status = TransferStatus.COMPLETED
+            if transfer.transfer_type == TransferType.UPLOAD:
+
+                # Upload file with overwrite callback
+                def upload_overwrite_callback(remote_path):
+                    # For non-GUI transfers, we'll log and return True (allow overwrite)
+                    # GUI transfers will provide their own callback
+                    if hasattr(transfer, '_overwrite_callback') and transfer._overwrite_callback:
+                        return transfer._overwrite_callback(remote_path)
                     else:
+                        self.logger.warning(f"File exists on remote server, proceeding with overwrite: {remote_path}")
+                        return True
+                    
+                with SecureTemporaryCredentials(dest_config) as temp_params:
+                    if not dest_client.connect(**temp_params):
                         transfer.status = TransferStatus.FAILED
-                        transfer.error_message = "Upload failed"
-                        
-                elif transfer.transfer_type == TransferType.DOWNLOAD:
-                    # Download file with overwrite callback
-                    def download_overwrite_callback(local_path):
-                        # For non-GUI transfers, we'll log and return True (allow overwrite)
-                        # GUI transfers will provide their own callback
-                        if hasattr(transfer, '_overwrite_callback') and transfer._overwrite_callback:
-                            return transfer._overwrite_callback(local_path)
-                        else:
-                            self.logger.warning(f"File exists locally, proceeding with overwrite: {local_path}")
-                            return True
+                        transfer.error_message = "Failed to connect to destination server for file transfer"
+                        self.logger.error(transfer.error_message)
+                        return
+                
+                # Upload file
+                result = dest_client.upload_file(
+                    transfer.source_path, 
+                    transfer.dest_path,
+                    transfer.chunks,
+                    sftp_progress_wrapper,
+                    upload_overwrite_callback
+                )
                     
-                    result = client.download_file(
-                        transfer.source_path,
-                        transfer.dest_path,
-                        transfer.chunks,
-                        sftp_progress_wrapper,
-                        download_overwrite_callback
-                    )
+                if not result:
+                    transfer.status = TransferStatus.FAILED
+                    transfer.error_message = "Upload failed"
                     
-                    if result:
-                        transfer.status = TransferStatus.COMPLETED
+            elif transfer.transfer_type == TransferType.DOWNLOAD:
+
+                # Download file with overwrite callback
+                def download_overwrite_callback(local_path):
+                    # For non-GUI transfers, we'll log and return True (allow overwrite)
+                    # GUI transfers will provide their own callback
+                    if hasattr(transfer, '_overwrite_callback') and transfer._overwrite_callback:
+                        return transfer._overwrite_callback(local_path)
                     else:
-                        transfer.status = TransferStatus.FAILED
-                        transfer.error_message = "Download failed"
+                        self.logger.warning(f"File exists locally, proceeding with overwrite: {local_path}")
+                        return True
                         
-                elif transfer.transfer_type == TransferType.SERVER_TO_SERVER:
-                    # Server-to-server transfer - use secure credential handling
-                    source_config = transfer.source_config.copy()
-                    dest_config = transfer.dest_config.copy()
+                # Download file
+                result = source_client.download_file(
+                    transfer.source_path,
+                    transfer.dest_path,
+                    transfer.chunks,
+                    sftp_progress_wrapper,
+                    download_overwrite_callback
+                )
+
                     
-                    # Server-to-server overwrite callback
-                    def s2s_overwrite_callback(dest_path):
-                        # For non-GUI transfers, we'll log and return True (allow overwrite)
-                        # GUI transfers will provide their own callback
-                        if hasattr(transfer, '_overwrite_callback') and transfer._overwrite_callback:
-                            return transfer._overwrite_callback(dest_path)
-                        else:
-                            self.logger.warning(f"File exists on destination server, proceeding with overwrite: {dest_path}")
-                            return True
+                if not result:
+                    transfer.status = TransferStatus.FAILED
+                    transfer.error_message = "Download failed"
                     
-                    # Use secure context managers for both credential sets
-                    with SecureTemporaryCredentials(source_config) as source_temp_params:
-                        with SecureTemporaryCredentials(dest_config) as dest_temp_params:
-                            result = client.server_to_server_transfer(
-                                source_temp_params,
-                                dest_temp_params,
-                                transfer.source_path,
-                                transfer.dest_path,
-                                chunks=transfer.chunks,
-                                progress_callback=sftp_progress_wrapper,
-                                overwrite_callback=s2s_overwrite_callback
-                            )
-                    
-                    if result:
-                        transfer.status = TransferStatus.COMPLETED
+            elif transfer.transfer_type == TransferType.SERVER_TO_SERVER:
+
+                # Server-to-server overwrite callback
+                def s2s_overwrite_callback(dest_path):
+                    # For non-GUI transfers, we'll log and return True (allow overwrite)
+                    # GUI transfers will provide their own callback
+                    if hasattr(transfer, '_overwrite_callback') and transfer._overwrite_callback:
+                        return transfer._overwrite_callback(dest_path)
                     else:
-                        transfer.status = TransferStatus.FAILED
-                        transfer.error_message = "Server-to-server transfer failed"
+                        self.logger.warning(f"File exists on destination server, proceeding with overwrite: {dest_path}")
+                        return True
                         
-            except Exception as e:
+                with SecureTemporaryCredentials(dest_config) as temp_params:
+                    if not dest_client.connect(**temp_params):
+                        transfer.status = TransferStatus.FAILED
+                        transfer.error_message = "Failed to connect to destination server for file transfer"
+                        self.logger.error(transfer.error_message)
+                        return
+                
+                # server to server file transfer     
+                client = SFTPClient(logger=self.logger)      
+                result = client.server_to_server_transfer(
+                    source_config,
+                    dest_config,
+                    transfer.source_path,
+                    transfer.dest_path,
+                    chunks=transfer.chunks,
+                    progress_callback=sftp_progress_wrapper,
+                    overwrite_callback=s2s_overwrite_callback
+                )
+
+                # Server to server using buffer of our machine, does not store on disk
+                # result = client.stream_remote_to_remote(
+                #     source_client,
+                #     transfer.source_path,
+                #     dest_client,
+                #     transfer.dest_path,
+                #     progress_callback=sftp_progress_wrapper, # Pass our wrapper
+                #     overwrite_callback=s2s_overwrite_callback
+                # )
+
+                if not result:
+                    transfer.status = TransferStatus.FAILED
+                    transfer.error_message = transfer.error_message if transfer.error_message else "Server to server file transfer failed"
+                    self.logger.error(f"Failed: {transfer.error_message}")
+                    return
+
+            # --- STEP 3: Calculate Destination File Hash and Compare ---
+            destination_hash = None
+            if transfer.transfer_type == TransferType.UPLOAD:
+                # Remote destination hash
+                with SecureTemporaryCredentials(dest_config) as temp_params:
+                    if not dest_client.connect(**temp_params):
+                        transfer.status = TransferStatus.FAILED
+                        transfer.error_message = "Failed to connect to destination server for hash verification"
+                        self.logger.error(transfer.error_message)
+                        return
+                
+                destination_hash = dest_client.get_remote_file_sha256(transfer.dest_path)
+                if destination_hash is None:
+                    transfer.status = TransferStatus.FAILED
+                    transfer.error_message = f"Failed to calculate SHA-256 for remote destination file: {transfer.dest_path}"
+                    self.logger.error(transfer.error_message)
+                    return
+                
+                transfer.destination_hash = destination_hash
+                self.logger.info(f"Remote destination hash for {transfer.dest_path}: {destination_hash}")
+
+            elif transfer.transfer_type == TransferType.DOWNLOAD:
+                # Local destination hash
+                destination_hash = self._calculate_local_file_sha256(transfer.dest_path)
+                if destination_hash is None:
+                    transfer.status = TransferStatus.FAILED
+                    transfer.error_message = f"Failed to calculate SHA-256 for local destination file: {transfer.dest_path}"
+                    self.logger.error(transfer.error_message)
+                    return
+                transfer.destination_hash = destination_hash
+                self.logger.info(f"Local destination hash for {transfer.dest_path}: {destination_hash}")
+
+            elif transfer.transfer_type == TransferType.SERVER_TO_SERVER:
+                # Remote destination hash (S2S)
+                with SecureTemporaryCredentials(dest_config) as temp_params:
+                    if not dest_client.connect(**temp_params):
+                        transfer.status = TransferStatus.FAILED
+                        transfer.error_message = "Failed to connect to destination server for hash verification (S2S)"
+                        self.logger.error(transfer.error_message)
+                        return
+                
+                destination_hash = dest_client.get_remote_file_sha256(transfer.dest_path)
+                if destination_hash is None:
+                    transfer.status = TransferStatus.FAILED
+                    transfer.error_message = f"Failed to calculate SHA-256 for remote destination file (S2S): {transfer.dest_path}"
+                    self.logger.error(transfer.error_message)
+                    return
+                
+                transfer.destination_hash = destination_hash
+                self.logger.info(f"Remote destination hash for {transfer.dest_path}: {destination_hash}")
+
+
+            # --- STEP 4: Compare Hashes ---
+            if source_hash and destination_hash and source_hash == destination_hash:
+                transfer.status = TransferStatus.COMPLETED
+                self.logger.info(f"Integrity check passed for {transfer.source_path} -> {transfer.dest_path}")
+            else:
                 transfer.status = TransferStatus.FAILED
-                transfer.error_message = f"Transfer operation failed: {str(e)}"
-                self.logger.error(f"Transfer {transfer.id} operation failed: {str(e)}")
-                    
+                transfer.error_message = f"File integrity check failed for {transfer.source_path} -> {transfer.dest_path}: Source and destination file hash do not match. Source Hash: {source_hash}, Dest Hash: {destination_hash}"
+                self.logger.error(transfer.error_message)
+
+            # transfer.status = TransferStatus.COMPLETED
+
         except InterruptedError:
             # Transfer was canceled or paused - this is normal
             self.logger.info(f"Transfer {transfer.id} was interrupted (canceled/paused)")
@@ -761,12 +858,15 @@ class TransferManager:
             
         finally:
             # Always disconnect the client when transfer is complete
-            if client:
-                try:
-                    client.disconnect()
-                    self.logger.info(f"Disconnected SFTP client for transfer {transfer.id}")
-                except Exception as disconnect_error:
-                    self.logger.warning(f"Error disconnecting client for transfer {transfer.id}: {str(disconnect_error)}")
+            try:
+                # Disconnect any clients opened for transfer
+                if source_client and source_client.ssh:
+                    source_client.disconnect()
+                if dest_client and dest_client.ssh:
+                    dest_client.disconnect()
+                self.logger.info(f"Disconnected SFTP client for transfer {transfer.id}")
+            except Exception as disconnect_error:
+                self.logger.warning(f"Error disconnecting client for transfer {transfer.id}: {str(disconnect_error)}")
             
             # Record end time and cleanup
             try:
@@ -775,32 +875,34 @@ class TransferManager:
                 # Force garbage collection to clear any lingering credential references
                 gc.collect()
                 
-                # Move from active to history - use proper locking
+                # Move from active to history
                 with self.lock:
                     if transfer.id in self.active_transfers:
                         del self.active_transfers[transfer.id]
                         self.transfer_history.append(transfer)
-                        
+
                 self.logger.info(f"Transfer {transfer.id} completed with status {transfer.status.name}: {transfer.source_path} -> {transfer.dest_path}")
-                
+            
             except Exception as cleanup_error:
                 self.logger.error(f"Error during cleanup for transfer {transfer.id}: {str(cleanup_error)}")
+    
+    # Removed the _register_progress_callback and _hook_progress_callback methods
+    # as the callback is now passed directly to TransferItem on creation.
 
-    def upload_file(self, local_path: str, remote_path: str, progress_callback: Callable = None, overwrite_callback: Callable = None) -> int:
+    def upload_file(self, local_path: str, remote_path: str, server_config: Dict, progress_callback: Callable = None, overwrite_callback: Callable = None) -> int:
         """
         Convenience method for uploading a file using the active connection.
         
         Args:
             local_path: Path to local file
             remote_path: Destination path on server
+            server_config: active connection config
             progress_callback: Callback function for progress updates
             overwrite_callback: Callback function for overwrite confirmation
             
         Returns:
             int: Transfer ID
         """
-        # Use special config to indicate we want to use the active connection
-        server_config = {'host': 'active_connection'}
         
         return self.queue_upload(
             local_path=local_path,
@@ -810,22 +912,20 @@ class TransferManager:
             overwrite_callback=overwrite_callback
         )
     
-    def download_file(self, remote_path: str, local_path: str, progress_callback: Callable = None, overwrite_callback: Callable = None) -> int:
+    def download_file(self, remote_path: str, local_path: str, server_config: Dict, progress_callback: Callable = None, overwrite_callback: Callable = None) -> int:
         """
         Convenience method for downloading a file using the active connection.
         
         Args:
             remote_path: Path to remote file
             local_path: Destination path on local system
+            server_config: active connection config
             progress_callback: Callback function for progress updates
             overwrite_callback: Callback function for overwrite confirmation
             
         Returns:
             int: Transfer ID
         """
-        # Use special config to indicate we want to use the active connection
-        server_config = {'host': 'active_connection'}
-        
         return self.queue_download(
             remote_path=remote_path,
             local_path=local_path,

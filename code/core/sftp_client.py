@@ -8,6 +8,9 @@ import io
 import tempfile
 import subprocess
 from typing import Dict, Optional, Union, Tuple, Callable
+import socket
+
+from code.utils.secure_string import SecureTemporaryCredentials
 
 class SFTPClient:
     """
@@ -20,6 +23,7 @@ class SFTPClient:
         self.sftp = None
         # Store connection configuration after successful connection
         self.connection_config = None 
+        self._remote_os_type = None # Added to store detected remote OS type
         if logger:
             self.logger = logger
         else:
@@ -207,8 +211,18 @@ class SFTPClient:
                 'key_path': key_path,
                 'passphrase': passphrase
             }
+            # Detect remote OS type after successful connection
+            self._detect_remote_os()
             return True
-            
+
+        except socket.gaierror as e:
+            # Specifically catch DNS resolution errors
+            self.logger.error(f"Connection failed due to DNS resolution issue: Host '{host}' could not be resolved. "
+                              f"Please check the hostname/IP address and your network's DNS settings. Error: {e}")
+            if self.ssh:
+                self.ssh.close()
+            return False
+
         except Exception as e:
             self.logger.error(f"Connection failed: {str(e)}")
             if self.ssh:
@@ -224,8 +238,176 @@ class SFTPClient:
             self.ssh.close()
             self.ssh = None
         self.connection_config = None # Clear stored config
+        self._remote_os_type = None # Clear detected OS type
         self.logger.info("Disconnected from server")
+
+    def _detect_remote_os(self):
+        """Attempts to detect the remote operating system."""
+        if not self.ssh:
+            self.logger.warning("SSH connection not established, cannot detect remote OS.")
+            return
+
+        try:
+            stdin, stdout, stderr = self.ssh.exec_command('cat /etc/os-release', timeout=5)
+            output = stdout.read().decode('utf-8', errors='ignore').strip()
+            error = stderr.read().decode('utf-8', errors='ignore').strip()
             
+            if output and "No such file or directory" not in error:
+                
+                if "ID_LIKE=debian" in output or "ID=ubuntu" in output or "ID=debian" in output:
+                    self._remote_os_type = "Linux (Debian/Ubuntu)"
+                elif "ID_LIKE=rhel" in output or "ID=centos" in output or "ID=rhel" in output or "ID=fedora" in output:
+                    self._remote_os_type = "Linux (RHEL/CentOS/Fedora)"
+                elif "PRETTY_NAME" in output or "NAME=" in output:
+                    self._remote_os_type = "Linux (Generic)"
+                
+                self.logger.info(f"Detected OS from /etc/os-release: {self._remote_os_type}")
+                return self._remote_os_type
+            
+            elif error and "No such file or directory" in error:
+                self.logger.debug("'/etc/os-release' not found. Trying other methods.")
+            
+            else:
+                self.logger.warning(f"Error or unexpected output from '/etc/os-release': {error if error else output[:100]}")
+        
+        except paramiko.SSHException as e:
+            self.logger.warning(f"SSH error during /etc/os-release check: {e}")
+       
+        except Exception as e:
+            self.logger.error(f"Unexpected error during /etc/os-release check: {e}")
+
+
+        # Priority 2: Try 'uname -a' (Unix-like systems)
+        try:
+            stdin, stdout, stderr = self.ssh.exec_command('uname -a', timeout=5)
+            output = stdout.read().decode('utf-8', errors='ignore').strip().lower()
+            error = stderr.read().decode('utf-8', errors='ignore').strip()
+            
+            if output and "not found" not in error:
+                
+                if "linux" in output:
+                    self._remote_os_type = "Linux"
+                elif "darwin" in output:
+                    self._remote_os_type = "macOS"
+                elif "bsd" in output:
+                    self._remote_os_type = "Other Unix (BSD)"
+                else:
+                    self._remote_os_type = "Other Unix" # Generic Unix-like
+                
+                self.logger.info(f"Detected OS from uname -a: {self._remote_os_type}")
+                return self._remote_os_type
+            
+            elif error and "not found" in error:
+                self.logger.debug("'uname' command not found. Trying Windows methods.")
+            
+            else:
+                self.logger.warning(f"Error or unexpected output from 'uname -a': {error if error else output[:100]}")
+        
+        except paramiko.SSHException as e:
+            self.logger.warning(f"SSH error during uname check: {e}")
+        
+        except Exception as e:
+            self.logger.error(f"Unexpected error during uname check: {e}")
+
+
+        # Priority 3: Try Windows-specific commands
+        # Try 'ver' for a simpler Windows check
+        try:
+            stdin, stdout, stderr = self.ssh.exec_command('ver', timeout=5)
+            output = stdout.read().decode('utf-8', errors='ignore').strip().lower()
+            error = stderr.read().decode('utf-8', errors='ignore').strip()
+            
+            if "windows" in output:
+                self._remote_os_type = "Windows"
+                self.logger.info(f"Detected OS from 'ver': {self._remote_os_type}")
+                return self._remote_os_type
+            
+            elif error and "not recognized" not in error:
+                self.logger.debug(f"Error or unexpected output from 'ver': {error if error else output[:100]}")
+        
+        except paramiko.SSHException as e:
+            self.logger.warning(f"SSH error during 'ver' check: {e}")
+        
+        except Exception as e:
+            self.logger.error(f"Unexpected error during 'ver' check: {e}")
+
+
+        # Fallback if no specific OS is detected
+        self._remote_os_type = None
+        self.logger.warning("Could not definitively detect remote OS, defaulting to 'None'.")
+        return self._remote_os_type
+
+    
+    def get_remote_file_sha256(self, remote_path: str) -> Optional[str]:
+        """
+        Calculates the SHA-256 hash of a remote file.
+        Adjusts command based on detected remote OS.
+
+        Args:
+            remote_path: Path to the remote file.
+
+        Returns:
+            str: The SHA-256 hash of the file if successful, None otherwise.
+        """
+        if not self.ssh:
+            self.logger.error("Not connected to an SSH server, cannot get remote file hash.")
+            return None
+
+        if self._remote_os_type is None:
+            self.logger.warning("Remote OS not detected or detection failed. Attempting to re-detect.")
+            self._detect_remote_os()
+            if self._remote_os_type is None:
+                self.logger.error("Could not determine remote OS to get file hash.")
+                return None
+
+        hash_command = ""
+        # Normalize remote path for command execution (e.g., Windows paths in PowerShell)
+        normalized_remote_path = remote_path.replace('/', '\\') if self._remote_os_type.lower() == "windows" else remote_path
+
+        if "linux" in self._remote_os_type.lower() or "unix" in self._remote_os_type.lower():
+            hash_command = f"sha256sum '{normalized_remote_path}'"
+
+        elif "macos" in self._remote_os_type.lower():
+            hash_command = f"shasum -a 256 '{normalized_remote_path}'"
+        
+        elif "windows" in self._remote_os_type.lower():
+            # PowerShell command to get SHA256 hash
+            hash_command = f'powershell.exe -Command "(Get-FileHash -Algorithm SHA256 \'{normalized_remote_path}\').Hash"'
+        
+        else:
+            self.logger.error(f"Unsupported remote OS for SHA-256 hash: {self._remote_os_type}")
+            return None
+
+        self.logger.info(f"Executing remote command: {hash_command}")
+        try:
+            stdin, stdout, stderr = self.ssh.exec_command(hash_command)
+            output = stdout.read().decode('utf-8').strip()
+            error = stderr.read().decode('utf-8').strip()
+
+            if error:
+                self.logger.error(f"Error executing remote hash command: {error}")
+                return None
+
+            # Parse the output to get the hash
+            if "linux" in self._remote_os_type.lower() or "macos" in self._remote_os_type.lower():
+                # sha256sum output: hash  filename
+                # shasum -a 256 output: hash  filename
+                if output and ' ' in output:
+                    return output.split(' ')[0]
+            elif "windows" in self._remote_os_type.lower():
+                # PowerShell output is just the hash string
+                if output and len(output) == 64: # SHA256 hash is 64 hex characters
+                    return output
+            else:
+                self.logger.error(f"Could not parse hash output for OS type: {self._remote_os_type}. Output: {output}")
+                return None
+
+        except Exception as e:
+            self.logger.error(f"Failed to get remote file hash: {str(e)}")
+            return None
+
+        return None
+
     def upload_file(self, 
                     local_path: str, 
                     remote_path: str, 
@@ -609,9 +791,10 @@ class SFTPClient:
         Returns:
             bool: True if transfer successful, False otherwise
         """
-        import tempfile
-        import os
         
+        source_client = None
+        dest_client = None
+
         # Create secure temporary file
         temp_dir = os.path.join(os.path.dirname(__file__), "..", "temp")
         os.makedirs(temp_dir, exist_ok=True)
@@ -639,9 +822,10 @@ class SFTPClient:
             source_connect_params.pop('has_password', None)
             source_connect_params.pop('has_passphrase', None) # Also remove has_passphrase
             
-            if not source_client.connect(**source_connect_params):
-                self.logger.error("Failed to connect to source server")
-                return False
+            with SecureTemporaryCredentials(source_connect_params) as temp_params:
+                if not source_client.connect(**temp_params):
+                    self.logger.error("Failed to connect to source server")
+                    return False
                 
             self.logger.info(f"Downloading from source server to secure temp location: {temp_path}")
             download_result = source_client.download_file(
@@ -662,9 +846,10 @@ class SFTPClient:
             dest_connect_params.pop('has_password', None)
             dest_connect_params.pop('has_passphrase', None) # Also remove has_passphrase
 
-            if not dest_client.connect(**dest_connect_params):
-                self.logger.error("Failed to connect to destination server")
-                return False
+            with SecureTemporaryCredentials(dest_connect_params) as temp_params:
+                if not dest_client.connect(**temp_params):
+                    self.logger.error("Failed to connect to destination server")
+                    return False
                 
             self.logger.info(f"Uploading from secure temp location to destination server: {dest_path}")
             upload_result = dest_client.upload_file(
@@ -685,6 +870,17 @@ class SFTPClient:
             self.logger.error(f"Server-to-server transfer failed: {str(e)}")
             return False
         finally:
+            # CLose any opened connections
+            if source_client:
+                try:
+                    source_client.disconnect()
+                except:
+                    pass
+            if dest_client:
+                try:
+                    dest_client.disconnect()
+                except:
+                    pass
             # Secure cleanup of temporary file
             if os.path.exists(temp_path):
                 try:
@@ -709,6 +905,76 @@ class SFTPClient:
                     except:
                         pass
 
+    def stream_remote_to_remote(self,
+                                source_client: 'SFTPClient',
+                                source_path: str,
+                                dest_client: 'SFTPClient',
+                                dest_path: str,
+                                chunk_size: int = 1048576,  # e.g., 1MB chunks
+                                progress_callback: Callable = None,
+                                overwrite_callback: Callable[[str], bool] = None) -> bool:
+        """
+        Streams a file directly from one remote SFTP server to another
+        without saving it to the local disk.
+
+        Args:
+            source_client: An initialized SFTPClient instance connected to the source server.
+            source_path: The path to the file on the source server.
+            dest_client: An initialized SFTPClient instance connected to the destination server.
+            dest_path: The path to the destination file on the target server.
+            chunk_size: The size of data chunks to read/write in bytes.
+            progress_callback: Optional callback for progress updates (current_bytes, total_bytes).
+            overwrite_callback: Optional callback function for overwrite confirmation.
+
+        Returns:
+            bool: True if the transfer was successful, False otherwise.
+        """
+        if not source_client.sftp or not dest_client.sftp:
+            self.logger.error("Both source and destination SFTP clients must be connected.")
+            return False
+
+        try:
+            if overwrite_callback:
+                if not overwrite_callback(source_path):
+                    self.logger.info(f"Upload canceled by user: {dest_path}")
+                    return False
+                
+            # Get file size for progress reporting
+            sftp_attrs = source_client.sftp.stat(source_path)
+            total_bytes = sftp_attrs.st_size
+            transferred_bytes = 0
+
+            # Open remote source file for reading
+            # 'rb' mode for binary read
+            with source_client.sftp.open(source_path, 'rb') as sftp_source_file:
+                # Open remote destination file for writing
+                # 'wb' mode for binary write; creates file if it doesn't exist, truncates if it does
+                with dest_client.sftp.open(dest_path, 'wb') as sftp_dest_file:
+                    while True:
+                        chunk = sftp_source_file.read(chunk_size)
+                        if not chunk:
+                            break  # End of file
+
+                        sftp_dest_file.write(chunk)
+                        transferred_bytes += len(chunk)
+
+                        if progress_callback:
+                            progress_callback(transferred_bytes, total_bytes, (transferred_bytes/total_bytes) * 100)
+
+            self.logger.info(f"Successfully streamed '{source_path}' from source to '{dest_path}' on destination.")
+            return True
+
+        except FileNotFoundError:
+            self.logger.error(f"One of the files not found during streaming: {source_path} or {dest_path}")
+            return False
+        except paramiko.SFTPError as e:
+            self.logger.error(f"SFTP error during streaming: {e}")
+            return False
+        except Exception as e:
+            self.logger.error(f"An unexpected error occurred during streaming: {e}")
+            return False
+    
+    
     def list_directory(self, remote_path: str = '.') -> list:
         """
         List the contents of a directory on the SFTP server.

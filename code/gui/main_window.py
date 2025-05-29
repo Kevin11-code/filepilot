@@ -478,6 +478,8 @@ class MainWindow(QMainWindow):
         if reply != QMessageBox.Yes:
             return
         
+        remote_server_config = self.remote_panel.client.connection_config # Get the active connection config
+
         # Create overwrite callback for upload
         def upload_overwrite_callback(remote_file_path):
             reply = QMessageBox.question(
@@ -490,7 +492,7 @@ class MainWindow(QMainWindow):
         
         # Start the transfer using the signal bridge for thread-safe callbacks
         transfer_id = self.transfer_manager.upload_file(
-            source_full_path, destination_full_path, 
+            source_full_path, destination_full_path, remote_server_config,
             # Pass TransferType.UPLOAD and a reference to the remote_panel
             lambda tid, tr, tt: self.signal_bridge.update_progress(tid, tr, tt, TransferType.UPLOAD, self.remote_panel),
             upload_overwrite_callback)
@@ -539,6 +541,12 @@ class MainWindow(QMainWindow):
         if reply != QMessageBox.Yes:
             return
         
+        if not self.remote_panel.client:
+            QMessageBox.warning(self, "No Remote Connection", "Please connect to a remote server before downloading.")
+            return
+
+        remote_server_config = self.remote_panel.client.connection_config # Get the active connection config
+
         # Create overwrite callback for download
         def download_overwrite_callback(local_file_path):
             reply = QMessageBox.question(
@@ -551,7 +559,7 @@ class MainWindow(QMainWindow):
         
         # Start the transfer using the signal bridge for thread-safe callbacks
         transfer_id = self.transfer_manager.download_file(
-                source_full_path, destination_full_path, 
+                source_full_path, destination_full_path, remote_server_config,
                 lambda tid, tr, tt: self.signal_bridge.update_progress(tid, tr, tt, TransferType.DOWNLOAD, None),
                 download_overwrite_callback)
             
@@ -601,9 +609,15 @@ class MainWindow(QMainWindow):
             source_path = full_path
         
         if destination_path:
+            if not self.remote_panel.client:
+                QMessageBox.warning(self, "No Remote Connection", "Please connect to a remote server before uploading.")
+                return
+
+            remote_server_config = self.remote_panel.client.connection_config # Get the active connection config
+            
             # Start the transfer using the signal bridge for thread-safe callbacks
             transfer_id = self.transfer_manager.upload_file(
-                source_path, destination_path, 
+                source_path, destination_path, remote_server_config,
                 # Pass TransferType.UPLOAD and a reference to the remote_panel
                 lambda tid, tr, tt: self.signal_bridge.update_progress(tid, tr, tt, TransferType.UPLOAD, self.remote_panel))
             
@@ -663,9 +677,11 @@ class MainWindow(QMainWindow):
             source_path = full_path
         
         if destination_path:
+            remote_server_config = self.remote_panel.client.connection_config # Get the active connection config
+
             # Start the transfer using the signal bridge for thread-safe callbacks
             transfer_id = self.transfer_manager.download_file(
-                source_path, destination_path, 
+                source_path, destination_path, remote_server_config,
                 lambda tid, tr, tt: self.signal_bridge.update_progress(tid, tr, tt, TransferType.DOWNLOAD, None)) #
             
             if transfer_id:

@@ -300,7 +300,8 @@ class AuthManager:
                 elif 'passphrase' in conn:
                     # Passphrase stored in config file
                     connection['passphrase'] = self._credential_manager.create_secure_string(conn['passphrase'])
-                        
+
+                # print("returning: ", connections)      
                 return connection
                 
         return {}

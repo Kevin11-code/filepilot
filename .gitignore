@@ -40,6 +40,7 @@ Thumbs.db
 
 # Local configuration
 code/config/connections.json
+/config/connections.json
 
 # Environment installation scripts - if they contain secrets
 # Uncomment if needed
