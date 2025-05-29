@@ -319,8 +319,12 @@ class TransferPanel(QWidget):
             # Source and Destination with truncated paths
             source_text = self._truncate_path(transfer['source'])
             dest_text = self._truncate_path(transfer['destination'])
-            table.setItem(row, 2, QTableWidgetItem(source_text))
-            table.setItem(row, 3, QTableWidgetItem(dest_text))
+            source_item = QTableWidgetItem(source_text)
+            source_item.setTextAlignment(Qt.AlignCenter)
+            dest_item = QTableWidgetItem(dest_text)
+            dest_item.setTextAlignment(Qt.AlignCenter)
+            table.setItem(row, 2, source_item)
+            table.setItem(row, 3, dest_item)
             
             # Status with minimalist indicators
             status_text = transfer['status']
@@ -329,6 +333,7 @@ class TransferPanel(QWidget):
             # Subtle visual cues using typography weight instead of colors
             if 'COMPLETED' in status_text:
                 status_item.setText(f"✓ {status_text}")
+                status_item.setForeground(QColor(0, 128, 0))  # Green tex
                 font = status_item.font()
                 font.setBold(True)
                 status_item.setFont(font)
@@ -353,6 +358,8 @@ class TransferPanel(QWidget):
             # Minimalist progress bar
             progress_widget = QWidget()
             progress_layout = QVBoxLayout(progress_widget)
+            progress_layout.setContentsMargins(0, 0, 0, 0)
+            progress_layout.setSpacing(0)  # No spacing for compact look
             
             progress_bar = QProgressBar()
             progress_bar.setStyleSheet("""
@@ -362,14 +369,14 @@ class TransferPanel(QWidget):
                     text-align: center;
                     font-size: 11px;
                     height: 14px;
-                    background-color: #f8f8f8;
+                    background-color: ##00FF00;
                 }
                 QProgressBar::chunk {
                     background-color: #1a1a1a;
                     border-radius: 1px;
                 }
             """)
-            
+            progress_bar.setTextVisible(True)
             # Parse progress percentage
             try:
                 progress_text = transfer['progress']
