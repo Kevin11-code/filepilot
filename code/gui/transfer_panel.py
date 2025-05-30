@@ -392,6 +392,7 @@ class TransferPanel(QWidget):
                 status_item.setFont(font)
             elif 'FAILED' in status_text:
                 status_item.setText(f"✗ {status_text}")
+                status_item.setForeground(QColor(252, 3, 40))  # Red tex
                 font = status_item.font()
                 font.setBold(True)
                 status_item.setFont(font)
@@ -399,10 +400,12 @@ class TransferPanel(QWidget):
                 status_item.setText(f"|| {status_text}")
             elif 'IN_PROGRESS' in status_text or 'ACTIVE' in status_text or 'TRANSFERRING' in status_text:
                 status_item.setText(f"→ {status_text}")
+                status_item.setForeground(QColor(0, 128, 0))  # Green tex
             elif 'QUEUED' in status_text:
                 status_item.setText(f"⏳ {status_text}")
             elif 'CANCELED' in status_text:
                 status_item.setText(f"✗ {status_text}")
+                status_item.setForeground(QColor(252, 3, 40))  # Red tex
             else:
                 status_item.setText(f"· {status_text}")
             
