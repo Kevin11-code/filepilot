@@ -414,7 +414,7 @@ class SFTPClient:
                     chunks: int = 10, 
                     progress_callback: Callable[[float, float, float], None] = None,
                     overwrite_callback: Callable[[str], bool] = None,
-                    should_abort: Callable[[], bool]= None) -> bool:
+                    cancel_event=None) -> bool:
         """
         Upload a file to the SFTP server with chunking and progress reporting.
         
@@ -544,8 +544,8 @@ class SFTPClient:
                         last_log_time = start_time
                         
                         while True:
-                            if should_abort and should_abort():
-                                self.logger.info("Upload aborted by user.")
+                            if (cancel_event and cancel_event.is_set()):
+                                self.logger.info("Upload cancelled by user.")
                                 return False
                             chunk_data = local_file.read(chunk_size)
                             if not chunk_data:
@@ -679,7 +679,7 @@ class SFTPClient:
                       chunks: int = 10, 
                       progress_callback: Callable[[float, float, float], None] = None,
                       overwrite_callback: Callable[[str], bool] = None,
-                      should_abort: Callable[[], bool] = None) -> bool:
+                      cancel_event=None) -> bool:
         """
         Download a file from the SFTP server with chunking and progress reporting.
         
@@ -730,8 +730,8 @@ class SFTPClient:
                     last_log_time = start_time
                     
                     while True:
-                        if should_abort and should_abort():
-                            self.logger.info("Download aborted by user.")
+                        if (cancel_event and cancel_event.is_set()):
+                            self.logger.info("Download cancelled by user.")
                             return False
                         chunk_data = remote_file.read(chunk_size)
                         if not chunk_data:

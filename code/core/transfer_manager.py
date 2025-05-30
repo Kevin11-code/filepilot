@@ -730,7 +730,8 @@ class TransferManager:
                     transfer.dest_path,
                     transfer.chunks,
                     sftp_progress_wrapper,
-                    upload_overwrite_callback
+                    upload_overwrite_callback,
+                    cancel_event=transfer.cancel_event
                 )
                     
                 if transfer.cancel_event.is_set():
@@ -759,7 +760,8 @@ class TransferManager:
                     transfer.dest_path,
                     transfer.chunks,
                     sftp_progress_wrapper,
-                    download_overwrite_callback
+                    download_overwrite_callback,
+                    cancel_event=transfer.cancel_event
                 )
 
                 if transfer.cancel_event.is_set():
