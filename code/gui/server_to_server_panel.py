@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QMessageBox, QInputDialog, QLineEdit, QStyle, QFrame
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QMessageBox, QStyle, QFrame
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 from PyQt5.QtGui import QIcon
 import posixpath
@@ -133,13 +133,12 @@ class ServerToServerPanel(DualPanelWidget):
             if reply != CustomMessageBox.Yes:
                 return
         else:
-            # For files, allow user to specify destination filename/path
-            dest_full_path, ok = QInputDialog.getText(
+            # Confirm file transfer with predetermined destination path
+            reply = CustomMessageBox.question(
                 self, "Transfer File",
-                "Destination path on second server:",
-                QLineEdit.Normal,
-                dest_full_path)
-            if not ok or not dest_full_path:
+                f"Transfer file '{os.path.basename(path)}' from source to destination '{dest_full_path}'?",
+                CustomMessageBox.Yes | CustomMessageBox.No, CustomMessageBox.Yes)
+            if reply != CustomMessageBox.Yes:
                 return
 
         dest_exists = False
@@ -192,7 +191,6 @@ class ServerToServerPanel(DualPanelWidget):
             )
 
             if transfer_id:
-                CustomMessageBox.information(self, "Transfer Started", f"Server-to-server transfer started with ID: {transfer_id}")
                 # Force immediate update of the transfer panel in MainWindow
                 if hasattr(self.parent(), 'transfer_panel'):
                     self.parent().transfer_panel.update_transfers()
@@ -208,12 +206,92 @@ class ServerToServerPanel(DualPanelWidget):
     def dest_item_selected(self, path, is_dir):
         """
         Handle item selection in the destination panel.
-        This is primarily for navigation within the destination server's file system.
+        This method initiates a server-to-server transfer from destination to source.
         """
-        # This panel's item selection doesn't initiate a transfer directly,
-        # but it could be used for context menu actions like "Create New Folder" etc.
-        # For now, just log or provide a placeholder.
-        # print(f"Destination item selected: {path}, is_dir: {is_dir}")
+        if not self.destination_panel.client or not self.source_panel.client:
+            CustomMessageBox.warning(self, "Connection Error", "Please connect to both source and destination servers.")
+            return
+
+        # Note: For destination to source transfer, destination becomes the source
+        source_full_path = posixpath.normpath(path.replace("\\", "/"))
+        dest_base_path = posixpath.normpath(self.source_panel.current_path.replace("\\", "/"))
+        dest_full_path = posixpath.join(dest_base_path, posixpath.basename(path.replace("\\", "/")))
+
+        if is_dir:
+            reply = CustomMessageBox.question(
+                self, "Transfer Directory",
+                f"Transfer directory '{os.path.basename(path)}' from destination to source '{dest_full_path}'?",
+                CustomMessageBox.Yes | CustomMessageBox.No, CustomMessageBox.Yes)
+            if reply != CustomMessageBox.Yes:
+                return
+        else:
+            # Confirm file transfer with predetermined destination path
+            reply = CustomMessageBox.question(
+                self, "Transfer File",
+                f"Transfer file '{os.path.basename(path)}' from destination to source '{dest_full_path}'?",
+                CustomMessageBox.Yes | CustomMessageBox.No, CustomMessageBox.Yes)
+            if reply != CustomMessageBox.Yes:
+                return
+
+        dest_exists = False
+        try:
+            if self.source_panel.client:
+                # This will raise FileNotFoundError if not exists
+                self.source_panel.client.sftp.stat(dest_full_path)
+                dest_exists = True
+        except Exception:
+            dest_exists = False
+
+        if dest_exists:
+            reply = CustomMessageBox.question(
+                self, "File Exists",
+                f"The file '{os.path.basename(dest_full_path)}' already exists on the source server.\n\n"
+                f"Destination path: {dest_full_path}\n\n"
+                "Do you want to overwrite it?",
+                CustomMessageBox.Yes | CustomMessageBox.No, CustomMessageBox.No)
+            if reply != CustomMessageBox.Yes:
+                return
+
+        # Create overwrite callback for server-to-server transfer
+        def s2s_overwrite_callback(file_path):
+            return True
+
+        # Get connection configs for transfer manager (swapped for dest->source transfer)
+        source_conn_name = self.destination_panel.conn_combo.currentText()  # destination becomes source
+        dest_conn_name = self.source_panel.conn_combo.currentText()  # source becomes destination
+        
+        source_config = self.auth_manager.get_connection_secure(source_conn_name)
+        dest_config = self.auth_manager.get_connection_secure(dest_conn_name)
+
+        if not source_config or not dest_config:
+            CustomMessageBox.critical(self, "Configuration Error", "Could not retrieve connection details for transfer.")
+            return
+
+        # Queue the server-to-server transfer with secure credential handling
+        try:
+            transfer_id = self.transfer_manager.queue_server_to_server(
+                source_full_path,
+                dest_full_path,
+                source_config,
+                dest_config,
+                # Pass lambda with TransferType.SERVER_TO_SERVER and the source panel reference (destination for this transfer)
+                progress_callback=lambda tid, tr, tt: self.signal_bridge.update_progress(
+                    tid, tr, tt, TransferType.SERVER_TO_SERVER, self.source_panel),
+                overwrite_callback=lambda _: True
+            )
+
+            if transfer_id:
+                # Force immediate update of the transfer panel in MainWindow
+                if hasattr(self.parent(), 'transfer_panel'):
+                    self.parent().transfer_panel.update_transfers()
+            else:
+                CustomMessageBox.critical(self, "Transfer Failed", "Failed to start server-to-server transfer.")
+                
+        except Exception as e:
+            CustomMessageBox.critical(self, "Transfer Failed", f"Failed to start transfer: {e}")
+        finally:
+            # Force garbage collection to clear any lingering credential references
+            gc.collect()
 
     def disconnect_all(self):
         """Disconnect both source and destination SFTP clients."""

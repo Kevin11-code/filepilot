@@ -493,8 +493,6 @@ class FilePanel(QWidget):
                         return
 
             if success:
-                title, text = SFTPMessages.format_message(SFTPMessages.DELETE_SUCCESS, os.path.basename(path))
-                CustomMessageBox.information(self, title, text)
                 # Use thread-safe refresh scheduling to prevent Qt threading errors
                 self._schedule_safe_refresh()
             else:
@@ -522,8 +520,6 @@ class FilePanel(QWidget):
                     return
 
             if success:
-                title, text = SFTPMessages.format_message(SFTPMessages.RENAME_SUCCESS, os.path.basename(old_path), os.path.basename(new_path))
-                CustomMessageBox.information(self, title, text)
                 # Use thread-safe refresh scheduling to prevent Qt threading errors
                 self._schedule_safe_refresh()
             else:

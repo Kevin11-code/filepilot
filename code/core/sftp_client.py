@@ -857,7 +857,6 @@ class SFTPClient:
             if should_abort and should_abort():
                 self.logger.info("Transfer aborted by user after download, before upload.")
                 return False
-        except Exception as e:
                     
             # Connect to destination server and upload
             dest_client = SFTPClient(logger=self.logger)
@@ -883,7 +882,6 @@ class SFTPClient:
                 lambda bytes_t, total, percent: progress_callback(bytes_t, total, 50 + percent/2) if progress_callback else None,
                 overwrite_callback,
                 should_abort
-
             )
             dest_client.disconnect()
             
@@ -898,7 +896,7 @@ class SFTPClient:
             self.logger.error(f"Server-to-server transfer failed: {str(e)}")
             return False
         finally:
-            # CLose any opened connections
+            # Close any opened connections
             if source_client:
                 try:
                     source_client.disconnect()
