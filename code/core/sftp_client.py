@@ -780,7 +780,7 @@ class SFTPClient:
                                   chunks: int = 10,
                                   progress_callback: Callable[[float, float, float], None] = None,
                                   overwrite_callback: Callable[[str], bool] = None,
-                                  should_abort: Callable[[],bool] = None) -> bool:
+                                  cancel_event=None) -> bool:
         """
         Transfer a file from one server to another via the local system as an intermediary.
         Uses secure temporary file handling to prevent credential exposure.
@@ -836,8 +836,8 @@ class SFTPClient:
                 
             self.logger.info(f"Downloading from source server to secure temp location: {temp_path}")
 
-            if should_abort and should_abort():
-                self.logger.info("Transfer aborted by user before download started.")
+            if cancel_event and cancel_event.is_set():
+                self.logger.info("Download cancelled by user before download.")
                 return False
 
             download_result = source_client.download_file(
@@ -846,18 +846,17 @@ class SFTPClient:
                 chunks, 
                 lambda bytes_t, total, percent: progress_callback(bytes_t, total, percent/2) if progress_callback else None,
                 overwrite_callback,
-                should_abort
+                cancel_event=cancel_event
             )
             source_client.disconnect()
             
             if not download_result:
                 self.logger.error("Failed to download from source server")
                 return False
-
-            if should_abort and should_abort():
-                self.logger.info("Transfer aborted by user after download, before upload.")
-                return False
                     
+            if cancel_event and cancel_event.is_set():
+                self.logger.info("Download cancelled by user after download.")
+                return False    
             # Connect to destination server and upload
             dest_client = SFTPClient(logger=self.logger)
             # Create a copy of the config and remove the 'name' and 'has_password' keys
@@ -873,16 +872,20 @@ class SFTPClient:
                 
             self.logger.info(f"Uploading from secure temp location to destination server: {dest_path}")
 
-            if should_abort and should_abort():
-                self.logger.info("Transfer aborted by user before upload started.")
-                return False
+            if cancel_event and cancel_event.is_set():
+                self.logger.info("Transfer cancelled by user before upload.")
+                return False    
 
             upload_result = dest_client.upload_file(
                 temp_path, dest_path, chunks,
                 lambda bytes_t, total, percent: progress_callback(bytes_t, total, 50 + percent/2) if progress_callback else None,
                 overwrite_callback,
-                should_abort
+                cancel_event=cancel_event
             )
+
+            if not upload_result or cancel_event and cancel_event.is_set():
+                self.logger.info("Transfer cancelled by user during or after upload.")
+                return False
             dest_client.disconnect()
             
             if upload_result:

@@ -800,7 +800,8 @@ class TransferManager:
                     transfer.dest_path,
                     chunks=transfer.chunks,
                     progress_callback=sftp_progress_wrapper,
-                    overwrite_callback=s2s_overwrite_callback
+                    overwrite_callback=s2s_overwrite_callback,
+                    cancel_event=transfer.cancel_event
                 )
                 if transfer.cancel_event.is_set():
                     transfer.status = TransferStatus.CANCELED
