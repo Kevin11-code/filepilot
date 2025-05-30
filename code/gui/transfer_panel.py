@@ -53,6 +53,59 @@ class TransferPanel(QWidget):
                 color: #2c2c2c;
                 font-family: 'Segoe UI', 'San Francisco', 'Helvetica Neue', Arial, sans-serif;
             }
+            
+            /* Modern thin scrollbar styling */
+            QScrollBar:vertical {
+                border: none;
+                background: #f5f5f5;
+                width: 8px;
+                margin: 0px;
+            }
+            
+            QScrollBar::handle:vertical {
+                background: #c1c1c1;
+                min-height: 20px;
+                border-radius: 4px;
+            }
+            
+            QScrollBar::handle:vertical:hover {
+                background: #a8a8a8;
+            }
+            
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+                background: none;
+            }
+            
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+                background: none;
+            }
+            
+            QScrollBar:horizontal {
+                border: none;
+                background: #f5f5f5;
+                height: 8px;
+                margin: 0px;
+            }
+            
+            QScrollBar::handle:horizontal {
+                background: #c1c1c1;
+                min-width: 20px;
+                border-radius: 4px;
+            }
+            
+            QScrollBar::handle:horizontal:hover {
+                background: #a8a8a8;
+            }
+            
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+                width: 0px;
+                background: none;
+            }
+            
+            QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
+                background: none;
+            }
         """)
         
         # Minimalist tabs with more space for content - no header

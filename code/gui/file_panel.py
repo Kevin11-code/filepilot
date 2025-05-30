@@ -41,11 +41,165 @@ class FilePanel(QWidget):
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
+        
+        # Set overall widget style for black and white theme
+        self.setStyleSheet("""
+            QWidget {
+                background-color: #ffffff;
+                color: #2c2c2c;
+                font-family: 'Segoe UI', 'San Francisco', 'Helvetica Neue', Arial, sans-serif;
+            }
+            QTreeView {
+                background-color: #ffffff;
+                border: none;
+                gridline-color: #f5f5f5;
+                selection-background-color: #f8f8f8;
+                font-size: 12px;
+            }
+            QTreeView::item {
+                padding: 1px 2px;
+                border-bottom: 1px solid #f5f5f5;
+            }
+            QTreeView::item:selected {
+                background-color: #f8f8f8;
+                color: #1a1a1a;
+            }
+            QHeaderView::section {
+                background-color: #ffffff;
+                padding: 5px 3px;
+                border: none;
+                border-bottom: 1px solid #e5e5e5;
+                font-weight: 600;
+                color: #666666;
+                text-transform: uppercase;
+                font-size: 10px;
+                letter-spacing: 1px;
+            }
+            QTreeView::item:hover {
+                background-color: #fafafa;
+            }
+            QPushButton {
+                background-color: transparent;
+                color: #1a1a1a;
+                border: 1px solid #e5e5e5;
+                padding: 5px 10px;
+                border-radius: 0px;
+            }
+            QPushButton:hover {
+                background-color: #f8f8f8;
+                border-color: #d0d0d0;
+            }
+            QPushButton:pressed {
+                background-color: #1a1a1a;
+                color: #ffffff;
+            }
+            QLineEdit {
+                border: 1px solid #e5e5e5;
+                padding: 5px;
+                background-color: #ffffff;
+                selection-background-color: #1a1a1a;
+                selection-color: #ffffff;
+            }
+            QComboBox {
+                border: 1px solid #e5e5e5;
+                padding: 5px;
+                background-color: #ffffff;
+            }
+            QComboBox::drop-down {
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 20px;
+                border-left: 1px solid #e5e5e5;
+            }
+            QComboBox::down-arrow {
+                width: 12px;
+                height: 12px;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #ffffff;
+                border: 1px solid #e5e5e5;
+                selection-background-color: #f8f8f8;
+                selection-color: #1a1a1a;
+            }
+            QMenu {
+                background-color: #ffffff;
+                border: 1px solid #e5e5e5;
+                padding: 5px;
+            }
+            QMenu::item {
+                padding: 5px 25px 5px 20px;
+                border-radius: 2px;
+            }
+            
+            /* Modern thin scrollbar styling */
+            QScrollBar:vertical {
+                border: none;
+                background: #f5f5f5;
+                width: 8px;
+                margin: 0px;
+            }
+            
+            QScrollBar::handle:vertical {
+                background: #c1c1c1;
+                min-height: 20px;
+                border-radius: 4px;
+            }
+            
+            QScrollBar::handle:vertical:hover {
+                background: #a8a8a8;
+            }
+            
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+                background: none;
+            }
+            
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+                background: none;
+            }
+            
+            QScrollBar:horizontal {
+                border: none;
+                background: #f5f5f5;
+                height: 8px;
+                margin: 0px;
+            }
+            
+            QScrollBar::handle:horizontal {
+                background: #c1c1c1;
+                min-width: 20px;
+                border-radius: 4px;
+            }
+            
+            QScrollBar::handle:horizontal:hover {
+                background: #a8a8a8;
+            }
+            
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+                width: 0px;
+                background: none;
+            }
+            
+            QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
+                background: none;
+            }
+        """)
 
         # Connection / Path Bar
         path_bar_layout = QHBoxLayout()
         path_bar_layout.setContentsMargins(0, 0, 0, 0)
         path_bar_layout.setSpacing(5)
+        
+        # Add back and refresh buttons at the start
+        self.up_button = QPushButton(QIcon("resources/icons/back.svg"), "")
+        self.up_button.setToolTip("Go Up Directory")
+        self.up_button.clicked.connect(self.go_up_directory)
+        path_bar_layout.addWidget(self.up_button)
+        
+        self.refresh_button = QPushButton(QIcon("resources/icons/refresh.svg"), "")
+        self.refresh_button.setToolTip("Refresh Directory")
+        self.refresh_button.clicked.connect(self.refresh)
+        path_bar_layout.addWidget(self.refresh_button)
 
         if self.is_remote:
             self.conn_combo = QComboBox()
@@ -54,14 +208,9 @@ class FilePanel(QWidget):
             self.conn_combo.setMinimumWidth(150)
             path_bar_layout.addWidget(self.conn_combo)
 
-            self.connect_button = QPushButton("Connect")
-            self.connect_button.clicked.connect(self.connect_to_server)
-            path_bar_layout.addWidget(self.connect_button)
-            
-            self.disconnect_button = QPushButton("Disconnect")
-            self.disconnect_button.clicked.connect(self.disconnect_from_server)
-            self.disconnect_button.setEnabled(False) # Disable initially
-            path_bar_layout.addWidget(self.disconnect_button)
+            self.connection_button = QPushButton("Connect")
+            self.connection_button.clicked.connect(self.toggle_connection)
+            path_bar_layout.addWidget(self.connection_button)
         else:
             # For local panel, add a drive/root selection combo if needed
             pass # Currently no drive selection, just path edit
@@ -74,16 +223,6 @@ class FilePanel(QWidget):
         self.go_button = QPushButton("Go")
         self.go_button.clicked.connect(self.go_to_path)
         path_bar_layout.addWidget(self.go_button)
-
-        self.refresh_button = QPushButton(QIcon("resources/icons/refresh.svg"), "")
-        self.refresh_button.setToolTip("Refresh Directory")
-        self.refresh_button.clicked.connect(self.refresh)
-        path_bar_layout.addWidget(self.refresh_button)
-
-        self.up_button = QPushButton(QIcon("resources/icons/back.svg"), "")
-        self.up_button.setToolTip("Go Up Directory")
-        self.up_button.clicked.connect(self.go_up_directory)
-        path_bar_layout.addWidget(self.up_button)
 
         main_layout.addLayout(path_bar_layout)
 
@@ -104,12 +243,15 @@ class FilePanel(QWidget):
         self.file_view.doubleClicked.connect(self.on_item_double_clicked)
         self.file_view.setContextMenuPolicy(Qt.CustomContextMenu)
         self.file_view.customContextMenuRequested.connect(self.show_context_menu)
-        self.file_view.header().setStretchLastSection(False)
-        self.file_view.header().setSectionResizeMode(0, QHeaderView.Stretch) # Name column stretches
-        self.file_view.header().setSectionResizeMode(1, QHeaderView.ResizeToContents) # Size
-        self.file_view.header().setSectionResizeMode(2, QHeaderView.ResizeToContents) # Type
-        self.file_view.header().setSectionResizeMode(3, QHeaderView.ResizeToContents) # Permissions
-        self.file_view.header().setSectionResizeMode(4, QHeaderView.ResizeToContents) # Modified
+        
+        # Set last section to stretch to create space between last column and scrollbar
+        self.file_view.header().setStretchLastSection(True)
+        
+        # Configure dynamic column sizing with responsive behavior
+        self.setup_responsive_columns()
+        
+        # Connect resize event to adjust columns when window size changes
+        self.file_view.installEventFilter(self)
 
         main_layout.addWidget(self.file_view)
         
@@ -120,8 +262,13 @@ class FilePanel(QWidget):
     def set_client(self, client: SFTPClient):
         """Sets the SFTP client for the panel."""
         self.client = client
-        self.disconnect_button.setEnabled(client is not None)
-        self.connect_button.setEnabled(client is None)
+        
+        # Update the connection button text and state based on connection
+        if client is not None:
+            self.connection_button.setText("Disconnect")
+        else:
+            self.connection_button.setText("Connect")
+            
         self.conn_combo.setEnabled(client is None)
 
     def on_connection_selected(self, index):
@@ -142,12 +289,12 @@ class FilePanel(QWidget):
                     if idx != -1:
                         self.conn_combo.setCurrentIndex(idx)
                 else:
-                    self.conn_combo.setCurrentIndex(0) # Select empty if no client
+                    self.conn_combo.setCurrentIndex(0) # Select "Select a server" item
                 self.conn_combo.currentIndexChanged.connect(self.on_connection_selected)
                 return
 
         selected_name = self.conn_combo.currentText()
-        if selected_name:
+        if selected_name and selected_name != "Select a server":
             self.connect_to_server()
 
     def connect_to_server(self):
@@ -156,7 +303,7 @@ class FilePanel(QWidget):
             return
 
         conn_name = self.conn_combo.currentText()
-        if not conn_name:
+        if not conn_name or conn_name == "Select a server":
             title, text = SFTPMessages.NO_CONNECTION
             CustomMessageBox.warning(self, title, text)
             return
@@ -211,7 +358,7 @@ class FilePanel(QWidget):
             self.set_client(None)
             self.file_model.removeRows(0, self.file_model.rowCount()) # Clear view
             self.path_edit.setText("") # Clear path
-            self.conn_combo.setCurrentIndex(0) # Reset combo box
+            self.conn_combo.setCurrentIndex(0) # Reset combo box to "Select a server"
             title, text = SFTPMessages.CONNECTION_CLOSED
             CustomMessageBox.information(self, title, text)
 
@@ -527,6 +674,15 @@ class FilePanel(QWidget):
         except Exception as e:
             CustomMessageBox.critical(self, "Rename Error", f"Failed to rename '{os.path.basename(old_path)}': {e}")
     
+    def toggle_connection(self):
+        """Toggles between connecting and disconnecting from the server."""
+        if self.client:
+            # We're already connected, so disconnect
+            self.disconnect_from_server()
+        else:
+            # We're not connected, so connect
+            self.connect_to_server()
+
     def _schedule_safe_refresh(self):
         """Schedule a safe refresh that only runs on the main Qt thread."""
         # Ensure this method only runs on the main thread
@@ -579,8 +735,81 @@ class FilePanel(QWidget):
         
         connections = self.auth_manager.list_connections()
         self.conn_combo.clear()
-        self.conn_combo.addItem("") # Add empty item for no selection
+        self.conn_combo.addItem("Select a server") # Add descriptive text for no selection
         for conn in connections:
             name = conn.get('name')
             if name:
                 self.conn_combo.addItem(name)
+
+    def setup_responsive_columns(self):
+        """Configure responsive column sizing that adapts to available space"""
+        # Set minimum sizes for columns to prevent them from becoming too narrow
+        self.file_view.header().setMinimumSectionSize(60)
+        
+        # Initial column setup - we'll adjust these proportionally when the view resizes
+        total_width = self.file_view.width()
+        
+        # Calculate proportional widths
+        # Name takes 40% of space (with a minimum of 120px)
+        name_width = max(120, int(total_width * 0.4))
+        
+        # Set initial column widths
+        self.file_view.header().setSectionResizeMode(0, QHeaderView.Interactive)  # Name column
+        self.file_view.header().resizeSection(0, name_width)
+        
+        # Size, Type, Permissions columns are Interactive but with proportional sizes
+        self.file_view.header().setSectionResizeMode(1, QHeaderView.Interactive)  # Size
+        self.file_view.header().setSectionResizeMode(2, QHeaderView.Interactive)  # Type
+        self.file_view.header().setSectionResizeMode(3, QHeaderView.Interactive)  # Permissions
+        
+        # Size gets 15% of space
+        self.file_view.header().resizeSection(1, max(60, int(total_width * 0.15)))
+        # Type gets 15% of space
+        self.file_view.header().resizeSection(2, max(60, int(total_width * 0.15)))
+        # Permissions gets 15% of space
+        self.file_view.header().resizeSection(3, max(60, int(total_width * 0.15)))
+        
+        # Modified date gets remaining space and stretches
+        self.file_view.header().setSectionResizeMode(4, QHeaderView.Stretch)  # Modified
+
+    def eventFilter(self, source, event):
+        """Filter events to catch resize events on the file view"""
+        from PyQt5.QtCore import QEvent
+        
+        if (source == self.file_view and event.type() == QEvent.Resize):
+            # Resize event occurred on the file view - adjust columns
+            self.adjust_columns_for_current_width()
+            return False  # Let the event continue
+            
+        # For all other events, let them through
+        return super().eventFilter(source, event)
+        
+    def adjust_columns_for_current_width(self):
+        """Adjust column widths based on current view width"""
+        if not self.file_view.isVisible():
+            return
+            
+        # Get current width of the view
+        total_width = self.file_view.width()
+        
+        # Skip if width is too small
+        if total_width < 200:
+            return
+            
+        # Calculate new proportional widths while preserving user adjustments
+        # We use min width for very small windows, and proportional for larger ones
+        
+        # Name takes 40% of space (with a minimum of 120px)
+        name_width = max(120, int(total_width * 0.3))
+        
+        # Keep the width that user might have manually set, unless view was resized significantly
+        current_name_width = self.file_view.header().sectionSize(0)
+        if abs(current_name_width - name_width) > 50:  # Only adjust if difference is significant
+            self.file_view.header().resizeSection(0, name_width)
+            
+        # Apply similar logic to other columns (except the last one which stretches)
+        self.file_view.header().resizeSection(1, max(60, int(total_width * 0.15)))  # Size
+        self.file_view.header().resizeSection(2, max(60, int(total_width * 0.15)))  # Type 
+        self.file_view.header().resizeSection(3, max(60, int(total_width * 0.15)))  # Permissions
+        
+        # The Modified column automatically stretches to fill remaining space

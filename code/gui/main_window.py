@@ -115,7 +115,16 @@ class MainWindow(QMainWindow):
                 background-color: #f5f5f5;
             }
             QSplitter::handle {
-                background-color: #cccccc;
+                background-color: #e5e5e5;
+                height: 1px;
+                width: 1px;
+            }
+            QFrame[frameShape="4"],
+            QFrame[frameShape="5"] {
+                background-color: #e5e5e5;
+                max-width: 1px;
+                max-height: 1px;
+                border: none;
             }
             QStatusBar {
                 background-color: #f0f0f0;
@@ -157,6 +166,59 @@ class MainWindow(QMainWindow):
             CustomMessageBox {
                 background-color: #ffffff;
             }
+            
+            /* Modern thin scrollbar styling */
+            QScrollBar:vertical {
+                border: none;
+                background: #f5f5f5;
+                width: 8px;
+                margin: 0px;
+            }
+            
+            QScrollBar::handle:vertical {
+                background: #c1c1c1;
+                min-height: 20px;
+                border-radius: 4px;
+            }
+            
+            QScrollBar::handle:vertical:hover {
+                background: #a8a8a8;
+            }
+            
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+                background: none;
+            }
+            
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+                background: none;
+            }
+            
+            QScrollBar:horizontal {
+                border: none;
+                background: #f5f5f5;
+                height: 8px;
+                margin: 0px;
+            }
+            
+            QScrollBar::handle:horizontal {
+                background: #c1c1c1;
+                min-width: 20px;
+                border-radius: 4px;
+            }
+            
+            QScrollBar::handle:horizontal:hover {
+                background: #a8a8a8;
+            }
+            
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+                width: 0px;
+                background: none;
+            }
+            
+            QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
+                background: none;
+            }
         """)
         
         # Central widget
@@ -176,6 +238,59 @@ class MainWindow(QMainWindow):
                 font-size: 11px;
                 border: 1px solid #e5e5e5;
                 padding: 8px;
+            }
+            
+            /* Ensure scrollbars in activity view match the modern thin style */
+            QScrollBar:vertical {
+                border: none;
+                background: #f5f5f5;
+                width: 8px;
+                margin: 0px;
+            }
+            
+            QScrollBar::handle:vertical {
+                background: #c1c1c1;
+                min-height: 20px;
+                border-radius: 4px;
+            }
+            
+            QScrollBar::handle:vertical:hover {
+                background: #a8a8a8;
+            }
+            
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+                background: none;
+            }
+            
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+                background: none;
+            }
+            
+            QScrollBar:horizontal {
+                border: none;
+                background: #f5f5f5;
+                height: 8px;
+                margin: 0px;
+            }
+            
+            QScrollBar::handle:horizontal {
+                background: #c1c1c1;
+                min-width: 20px;
+                border-radius: 4px;
+            }
+            
+            QScrollBar::handle:horizontal:hover {
+                background: #a8a8a8;
+            }
+            
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+                width: 0px;
+                background: none;
+            }
+            
+            QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
+                background: none;
             }
         """)
         self._activity_log_last_pos = 0
@@ -212,16 +327,37 @@ class MainWindow(QMainWindow):
         self.local_panel.itemSelected.connect(self.local_item_selected)
         self.remote_panel.itemSelected.connect(self.remote_item_selected)
 
+        # Create a container widget with title and transfer mode
+        transfer_container = QWidget()
+        transfer_container_layout = QVBoxLayout(transfer_container)
+        transfer_container_layout.setContentsMargins(0, 0, 0, 0)
+        transfer_container_layout.setSpacing(0)
+        
+        # Add header with current mode title
+        self.transfer_mode_title = QLabel("LOCAL TO SERVER TRANSFER")
+        self.transfer_mode_title.setAlignment(Qt.AlignCenter)
+        self.transfer_mode_title.setStyleSheet("""
+            font-weight: bold;
+            font-size: 12pt;
+            color: #222222;
+            padding: 8px;
+            background-color: #f0f0f0;
+            border-bottom: 1px solid #e0e0e0;
+            letter-spacing: 1px;
+        """)
+        transfer_container_layout.addWidget(self.transfer_mode_title)
+        
         # --- Stacked Widget for different transfer modes ---
         self.transfer_mode_stacked_widget = QStackedWidget()
         self.transfer_mode_stacked_widget.addWidget(self.local_to_server_widget) # Index 0: Local to Server
         self.transfer_mode_stacked_widget.addWidget(self.server_to_server_panel) # Index 1: Server to Server
+        transfer_container_layout.addWidget(self.transfer_mode_stacked_widget)
 
         # Set initial view
         self.transfer_mode_stacked_widget.setCurrentIndex(0) #
         
-        # Add the stacked widget to the main splitter
-        splitter.addWidget(self.transfer_mode_stacked_widget) #
+        # Add the container to the main splitter
+        splitter.addWidget(transfer_container) #
         
         # Transfer panel
         self.transfer_panel = TransferPanel(transfer_manager=self.transfer_manager)
@@ -498,6 +634,7 @@ class MainWindow(QMainWindow):
             self.transfer_mode_stacked_widget.setCurrentIndex(1) # Show server-to-server panel
             self.toggle_transfer_mode_action.setText("Local to Server Transfer") #
             self.toggle_transfer_mode_action.setIcon(self.style().standardIcon(QStyle.SP_ComputerIcon)) # Change icon
+            self.transfer_mode_title.setText("SERVER TO SERVER TRANSFER")
             
             # Disconnect previous remote connection if any
             if self.remote_panel.client:
@@ -513,6 +650,7 @@ class MainWindow(QMainWindow):
             self.transfer_mode_stacked_widget.setCurrentIndex(0) # Show local-to-server panel
             self.toggle_transfer_mode_action.setText("Server to Server Transfer") #
             self.toggle_transfer_mode_action.setIcon(self.style().standardIcon(QStyle.SP_DirLinkIcon)) # Change icon
+            self.transfer_mode_title.setText("LOCAL TO SERVER TRANSFER")
 
             # Disconnect server-to-server connections if any
             self.server_to_server_panel.disconnect_all() #

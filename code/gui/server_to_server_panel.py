@@ -21,7 +21,64 @@ class DualPanelWidget(QWidget):
     """
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setup_scrollbar_style()
         self.setup_base_layout()
+    
+    def setup_scrollbar_style(self):
+        """Apply modern thin scrollbar styling to the panel"""
+        self.setStyleSheet("""
+            QScrollBar:vertical {
+                border: none;
+                background: #f5f5f5;
+                width: 8px;
+                margin: 0px;
+            }
+            
+            QScrollBar::handle:vertical {
+                background: #c1c1c1;
+                min-height: 20px;
+                border-radius: 4px;
+            }
+            
+            QScrollBar::handle:vertical:hover {
+                background: #a8a8a8;
+            }
+            
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+                background: none;
+            }
+            
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+                background: none;
+            }
+            
+            QScrollBar:horizontal {
+                border: none;
+                background: #f5f5f5;
+                height: 8px;
+                margin: 0px;
+            }
+            
+            QScrollBar::handle:horizontal {
+                background: #c1c1c1;
+                min-width: 20px;
+                border-radius: 4px;
+            }
+            
+            QScrollBar::handle:horizontal:hover {
+                background: #a8a8a8;
+            }
+            
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+                width: 0px;
+                background: none;
+            }
+            
+            QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
+                background: none;
+            }
+        """)
     
     def setup_base_layout(self):
         """Set up the base dual-panel layout with equal spacing."""
@@ -41,10 +98,17 @@ class DualPanelWidget(QWidget):
         # Add layouts with equal stretch factors for 50/50 split
         self.main_layout.addLayout(self.left_layout, 1)
         
-        # Add separator
+        # Add separator with refined styling
         separator = QFrame()
         separator.setFrameShape(QFrame.VLine)
-        separator.setFrameShadow(QFrame.Sunken)
+        separator.setFrameShadow(QFrame.Plain)
+        separator.setStyleSheet("""
+            QFrame {
+                background-color: #e5e5e5;
+                max-width: 1px;
+                border: none;
+            }
+        """)
         self.main_layout.addWidget(separator, 0)
         
         self.main_layout.addLayout(self.right_layout, 1)
@@ -69,8 +133,16 @@ class ServerToServerPanel(DualPanelWidget):
     def setup_panels(self):
         """Set up the server-to-server specific panels."""
         # Source Server Panel
-        source_label = QLabel("Source Server:")
-        source_label.setStyleSheet("font-weight: bold; font-size: 10pt;")
+        source_label = QLabel("SOURCE SERVER")
+        source_label.setAlignment(Qt.AlignCenter)
+        source_label.setStyleSheet("""
+            font-weight: bold;
+            font-size: 11pt;
+            color: #1a1a1a;
+            padding: 5px;
+            background-color: #f8f8f8;
+            border-bottom: 1px solid #e5e5e5;
+        """)
         self.left_layout.addWidget(source_label)
 
         self.source_panel = FilePanel(is_remote=True)
@@ -78,8 +150,16 @@ class ServerToServerPanel(DualPanelWidget):
         self.left_layout.addWidget(self.source_panel)
 
         # Destination Server Panel
-        dest_label = QLabel("Destination Server:")
-        dest_label.setStyleSheet("font-weight: bold; font-size: 10pt;")
+        dest_label = QLabel("DESTINATION SERVER")
+        dest_label.setAlignment(Qt.AlignCenter)
+        dest_label.setStyleSheet("""
+            font-weight: bold;
+            font-size: 11pt;
+            color: #1a1a1a;
+            padding: 5px;
+            background-color: #f8f8f8;
+            border-bottom: 1px solid #e5e5e5;
+        """)
         self.right_layout.addWidget(dest_label)
 
         self.destination_panel = FilePanel(is_remote=True)
@@ -330,13 +410,29 @@ class LocalToServerPanel(DualPanelWidget):
     def setup_panels(self):
         """Set up the local-to-server specific panels."""
         # Left side - Local Panel with heading
-        local_label = QLabel("Local Files:")
-        local_label.setStyleSheet("font-weight: bold; font-size: 10pt;")
+        local_label = QLabel("LOCAL FILES")
+        local_label.setAlignment(Qt.AlignCenter)
+        local_label.setStyleSheet("""
+            font-weight: bold;
+            font-size: 11pt;
+            color: #1a1a1a;
+            padding: 5px;
+            background-color: #f8f8f8;
+            border-bottom: 1px solid #e5e5e5;
+        """)
         self.left_layout.addWidget(local_label)
         self.left_layout.addWidget(self.local_panel)
 
         # Right side - Remote Panel  
-        remote_label = QLabel("Remote Server:")
-        remote_label.setStyleSheet("font-weight: bold; font-size: 10pt;")
+        remote_label = QLabel("REMOTE SERVER")
+        remote_label.setAlignment(Qt.AlignCenter)
+        remote_label.setStyleSheet("""
+            font-weight: bold;
+            font-size: 11pt;
+            color: #1a1a1a;
+            padding: 5px;
+            background-color: #f8f8f8;
+            border-bottom: 1px solid #e5e5e5;
+        """)
         self.right_layout.addWidget(remote_label)
         self.right_layout.addWidget(self.remote_panel)
