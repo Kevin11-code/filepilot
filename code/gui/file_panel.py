@@ -1,20 +1,22 @@
-from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
-    QTreeView, QHeaderView, QAbstractItemView, QMenu, QAction, QInputDialog,
-    QMessageBox, QDialog, QDialogButtonBox, QFormLayout, QComboBox, QCompleter, QStyle
+from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QComboBox, 
+    QTreeView, QLineEdit, QLabel, QSplitter,
+    QMessageBox, QDialog, QDialogButtonBox, QFormLayout, QComboBox, QCompleter, QStyle,
+    QAbstractItemView, QHeaderView, QMenu, QInputDialog, QApplication
 )
-from PyQt5.QtGui import QIcon
-from PyQt5.QtCore import Qt, QTimer, QModelIndex, QUrl, QSize, QDir, pyqtSignal
-from PyQt5.QtGui import QStandardItemModel, QStandardItem, QDesktopServices, QIcon
+from PyQt5.QtCore import Qt, pyqtSignal, QDir, QTimer, QThread, QUrl, QModelIndex
+from PyQt5.QtGui import QStandardItemModel, QStandardItem, QIcon, QPixmap, QFont, QDesktopServices
 
 import os
 import stat
-import datetime
+import platform
+import shutil
+from datetime import datetime
 from pathlib import Path
-import shutil # Import shutil for recursive local directory deletion
 
-from code.core.auth_manager import AuthManager
 from code.core.sftp_client import SFTPClient
+from code.core.auth_manager import AuthManager
+from code.gui.custom_message_box import CustomMessageBox, SFTPMessages
+
 from code.utils.file_utils import FileIconProvider
 from code.utils.secure_string import SecureTemporaryCredentials
 import secrets
@@ -125,10 +127,10 @@ class FilePanel(QWidget):
     def on_connection_selected(self, index):
         """Handle selection change in the connection combo box."""
         if self.client:
-            reply = QMessageBox.question(self, "Disconnect",
+            reply = CustomMessageBox.question(self, "Disconnect",
                                          "You are currently connected. Disconnect and switch?",
-                                         QMessageBox.Yes | QMessageBox.No)
-            if reply == QMessageBox.Yes:
+                                         CustomMessageBox.Yes | CustomMessageBox.No)
+            if reply == CustomMessageBox.Yes:
                 self.disconnect_from_server()
             else:
                 # Revert to previous selection if user cancels
@@ -155,12 +157,14 @@ class FilePanel(QWidget):
 
         conn_name = self.conn_combo.currentText()
         if not conn_name:
-            QMessageBox.warning(self, "Connect Error", "Please select a connection.")
+            title, text = SFTPMessages.NO_CONNECTION
+            CustomMessageBox.warning(self, title, text)
             return
 
         config = self.auth_manager.get_connection_secure(conn_name)
         if not config:
-            QMessageBox.critical(self, "Connect Error", f"Connection '{conn_name}' not found.")
+            title, text = SFTPMessages.CONNECTION_FAILED
+            CustomMessageBox.critical(self, title, f"Connection '{conn_name}' not found.")
             return
         
         try:
@@ -186,12 +190,15 @@ class FilePanel(QWidget):
                 self.current_path = home_dir
                 self.load_directory(self.current_path)
                 self.path_edit.setText(self.current_path)
-                QMessageBox.information(self, "Connected", f"Successfully connected to {conn_name}.")
+                title, text = SFTPMessages.CONNECTION_SUCCESS
+                CustomMessageBox.information(self, title, text)
             else:
-                QMessageBox.critical(self, "Connection Failed", "Could not connect to remote server.")
+                title, text = SFTPMessages.CONNECTION_FAILED
+                CustomMessageBox.critical(self, title, text)
                 self.set_client(None) # Ensure client is None on failure
         except Exception as e:
-            QMessageBox.critical(self, "Connection Failed", f"Failed to connect: {e}")
+            title, text = SFTPMessages.CONNECTION_FAILED
+            CustomMessageBox.critical(self, title, f"Failed to connect: {e}")
             self.set_client(None)
         finally:
             # Force garbage collection to clear any lingering references
@@ -205,7 +212,8 @@ class FilePanel(QWidget):
             self.file_model.removeRows(0, self.file_model.rowCount()) # Clear view
             self.path_edit.setText("") # Clear path
             self.conn_combo.setCurrentIndex(0) # Reset combo box
-            QMessageBox.information(self, "Disconnected", "Disconnected from server.")
+            title, text = SFTPMessages.CONNECTION_CLOSED
+            CustomMessageBox.information(self, title, text)
 
     def load_directory(self, path):
         """Loads and displays the contents of a directory."""
@@ -287,7 +295,7 @@ class FilePanel(QWidget):
                     ])
             self.path_edit.setText(path)
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Could not load directory '{path}': {e}")
+            CustomMessageBox.critical(self, "Error", f"Could not load directory '{path}': {e}")
             self.file_model.removeRows(0, self.file_model.rowCount()) # Clear existing items
             item = QStandardItem(f"Error loading directory: {e}")
             item.setFlags(item.flags() & ~Qt.ItemIsSelectable)
@@ -317,10 +325,10 @@ class FilePanel(QWidget):
                         'permissions': stat.filemode(stats.st_mode),
                         'owner': str(stats.st_uid), # On Windows, this might be a number
                         'group': str(stats.st_gid), # On Windows, this might be a number
-                        'modified_time': datetime.datetime.fromtimestamp(stats.st_mtime).strftime('%Y-%m-%d %H:%M:%S')
+                        'modified_time': datetime.fromtimestamp(stats.st_mtime).strftime('%Y-%m-%d %H:%M:%S')
                     })
         except Exception as e:
-            QMessageBox.critical(self, "Local Directory Error", f"Error accessing local directory: {e}")
+            CustomMessageBox.critical(self, "Local Directory Error", f"Error accessing local directory: {e}")
         return contents
 
     def go_to_path(self):
@@ -329,7 +337,7 @@ class FilePanel(QWidget):
         if not new_path:
             return
         if self.is_remote and not self.client:
-            QMessageBox.warning(self, "Not Connected", "Please connect to a server first.")
+            CustomMessageBox.warning(self, "Not Connected", "Please connect to a server first.")
             return
         self.load_directory(new_path)
 
@@ -419,41 +427,41 @@ class FilePanel(QWidget):
                 new_full_path = os.path.join(os.path.dirname(old_full_path), new_name).replace('\\', '/')
                 self.rename_item(old_full_path, new_full_path)
         elif action == delete_action:
-            if QMessageBox.question(self, "Confirm Delete", 
+            if CustomMessageBox.question(self, "Confirm Delete", 
                                   f"Are you sure you want to delete '{os.path.basename(full_path)}'? This cannot be undone.",
-                                  QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
+                                  CustomMessageBox.Yes | CustomMessageBox.No) == CustomMessageBox.Yes:
                 self.delete_item(full_path, is_dir)
         elif action == transfer_action:
             if not is_dir:
                 if self.is_remote:
                     # Remote panel - confirm download
-                    if QMessageBox.question(self, "Confirm Download",
+                    if CustomMessageBox.question(self, "Confirm Download",
                                             f"Do you want to download '{os.path.basename(full_path)}'?",
-                                            QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
+                                            CustomMessageBox.Yes | CustomMessageBox.No) == CustomMessageBox.Yes:
                         self.itemSelected.emit(full_path, False)
                 else:
                     # Local panel - confirm upload
-                    if QMessageBox.question(self, "Confirm Upload",
+                    if CustomMessageBox.question(self, "Confirm Upload",
                                             f"Do you want to upload '{os.path.basename(full_path)}'?",
-                                            QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
+                                            CustomMessageBox.Yes | CustomMessageBox.No) == CustomMessageBox.Yes:
                         self.itemSelected.emit(full_path, False)
 
 
     def open_file(self, file_path):
         """Opens a file using the default system application."""
         if self.is_remote:
-            QMessageBox.information(self, "Open File", "Remote files cannot be opened directly from here. Please download them first.")
+            CustomMessageBox.information(self, "Open File", "Remote files cannot be opened directly from here. Please download them first.")
         else:
             if not os.path.exists(file_path):
-                QMessageBox.warning(self, "File Not Found", f"The file '{file_path}' does not exist.")
+                CustomMessageBox.warning(self, "File Not Found", f"The file '{file_path}' does not exist.")
                 return
             
             url = QUrl.fromLocalFile(file_path)
             if not QDesktopServices.openUrl(url):
-                QMessageBox.warning(self, "Error", f"Could not open file: {file_path}")
+                CustomMessageBox.warning(self, "Error", f"Could not open file: {file_path}")
 
     def delete_item(self, path, is_dir):
-        """Deletes a file or directory."""
+        """Deletes a file or directory with thread-safe UI updates."""
         try:
             success = False
             if self.is_remote:
@@ -463,7 +471,7 @@ class FilePanel(QWidget):
                     else:
                         success = self.client.remove(path)
                 else:
-                    QMessageBox.warning(self, "Delete Error", "Not connected to remote server.")
+                    CustomMessageBox.warning(self, "Delete Error", "Not connected to remote server.")
                     return
             else: # Local file/directory
                 if is_dir:
@@ -474,52 +482,78 @@ class FilePanel(QWidget):
                         shutil.rmtree(path) 
                         success = True
                     else:
-                        QMessageBox.warning(self, "Delete Error", f"Local directory not found: {path}")
+                        CustomMessageBox.warning(self, "Delete Error", f"Local directory not found: {path}")
                         return
                 else:
                     if os.path.exists(path):
                         os.remove(path)
                         success = True
                     else:
-                        QMessageBox.warning(self, "Delete Error", f"Local file not found: {path}")
+                        CustomMessageBox.warning(self, "Delete Error", f"Local file not found: {path}")
                         return
 
             if success:
-                QMessageBox.information(self, "Delete Success", f"Successfully deleted '{os.path.basename(path)}'.")
-                # Refresh immediately after successful deletion
-                QTimer.singleShot(100, self.refresh)
+                title, text = SFTPMessages.format_message(SFTPMessages.DELETE_SUCCESS, os.path.basename(path))
+                CustomMessageBox.information(self, title, text)
+                # Use thread-safe refresh scheduling to prevent Qt threading errors
+                self._schedule_safe_refresh()
             else:
                 # If success is False, an error message should have been logged/displayed by SFTPClient or local ops
-                QMessageBox.critical(self, "Delete Failed", f"Failed to delete '{os.path.basename(path)}'. Check logs for details.")
+                CustomMessageBox.critical(self, "Delete Failed", f"Failed to delete '{os.path.basename(path)}'. Check logs for details.")
         except Exception as e:
-            QMessageBox.critical(self, "Delete Error", f"Failed to delete '{os.path.basename(path)}': {e}")
+            CustomMessageBox.critical(self, "Delete Error", f"Failed to delete '{os.path.basename(path)}': {e}")
 
     def rename_item(self, old_path, new_path):
-        """Renames a file or directory."""
+        """Renames a file or directory with thread-safe UI updates."""
         try:
             success = False
             if self.is_remote:
                 if self.client:
                     success = self.client.rename(old_path, new_path)
                 else:
-                    QMessageBox.warning(self, "Rename Error", "Not connected to remote server.")
+                    CustomMessageBox.warning(self, "Rename Error", "Not connected to remote server.")
                     return
             else: # Local file/directory
                 if os.path.exists(old_path):
                     os.rename(old_path, new_path)
                     success = True
                 else:
-                    QMessageBox.warning(self, "Rename Error", f"Local item not found: {old_path}")
+                    CustomMessageBox.warning(self, "Rename Error", f"Local item not found: {old_path}")
                     return
 
             if success:
-                QMessageBox.information(self, "Rename Success", f"Successfully renamed '{os.path.basename(old_path)}' to '{os.path.basename(new_path)}'.")
-                # Refresh immediately after successful rename
-                QTimer.singleShot(100, self.refresh)
+                title, text = SFTPMessages.format_message(SFTPMessages.RENAME_SUCCESS, os.path.basename(old_path), os.path.basename(new_path))
+                CustomMessageBox.information(self, title, text)
+                # Use thread-safe refresh scheduling to prevent Qt threading errors
+                self._schedule_safe_refresh()
             else:
-                QMessageBox.critical(self, "Rename Failed", f"Failed to rename '{os.path.basename(old_path)}'. Check logs for details.")
+                CustomMessageBox.critical(self, "Rename Failed", f"Failed to rename '{os.path.basename(old_path)}'. Check logs for details.")
         except Exception as e:
-            QMessageBox.critical(self, "Rename Error", f"Failed to rename '{os.path.basename(old_path)}': {e}")
+            CustomMessageBox.critical(self, "Rename Error", f"Failed to rename '{os.path.basename(old_path)}': {e}")
+    
+    def _schedule_safe_refresh(self):
+        """Schedule a safe refresh that only runs on the main Qt thread."""
+        # Ensure this method only runs on the main thread
+        if not QApplication.instance() or QThread.currentThread() != QApplication.instance().thread():
+            # If called from a worker thread, schedule on main thread
+            QTimer.singleShot(0, self._schedule_safe_refresh)
+            return
+        
+        # Only schedule refresh if application is not shutting down
+        if QApplication.instance() and not QApplication.instance().closingDown():
+            QTimer.singleShot(100, self._perform_safe_refresh)
+    
+    def _perform_safe_refresh(self):
+        """Perform the actual refresh operation safely on the main thread."""
+        try:
+            # Double-check we're on the main thread and app is still running
+            if (QApplication.instance() and 
+                not QApplication.instance().closingDown() and 
+                QThread.currentThread() == QApplication.instance().thread()):
+                self.refresh()
+        except Exception as e:
+            # Log error but don't crash
+            print(f"Error during safe refresh: {str(e)}")
 
     # Helper methods for formatting
     def format_size(self, size):
@@ -539,7 +573,7 @@ class FilePanel(QWidget):
     def format_datetime(self, timestamp):
         # Ensure timestamp is a float/int before converting
         if isinstance(timestamp, (int, float)):
-            return datetime.datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')
+            return datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')
         return "N/A" # Or handle as error/unknown
 
     def refresh_connections(self):

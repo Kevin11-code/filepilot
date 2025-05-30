@@ -667,6 +667,10 @@ class TransferManager:
             # Progress callback wrapper for SFTPClient
             def sftp_progress_wrapper(bytes_transferred, total_bytes, percent):
                 try:
+                    # First check if transfer is being canceled or has already completed
+                    if transfer.cancel_event.is_set() or transfer.status in [TransferStatus.CANCELED, TransferStatus.COMPLETED, TransferStatus.FAILED]:
+                        return
+                    
                     transfer.bytes_transferred = bytes_transferred
                     transfer.total_bytes = total_bytes
                     transfer.progress = percent
@@ -674,13 +678,15 @@ class TransferManager:
                     if elapsed > 0:
                         transfer.transfer_rate = bytes_transferred / elapsed / (1024 * 1024)  # MB/s
                     
-                    # Call the TransferItem's stored progress callback if it exists
-                    if transfer._progress_callback:
+                    # Call the TransferItem's stored progress callback if it exists and transfer is still active
+                    if transfer._progress_callback and transfer.status == TransferStatus.IN_PROGRESS:
                         try:
                             # The stored callback expects (transfer_id, transferred_bytes, total_bytes)
                             transfer._progress_callback(transfer.id, bytes_transferred, total_bytes)
                         except Exception as e:
                             self.logger.error(f"Error in transfer {transfer.id} progress callback: {str(e)}")
+                            # Disable further progress callbacks on error to prevent crashes
+                            transfer._progress_callback = None
                     
                     # --- PAUSE/RESUME SUPPORT: Wait here if paused during transfer ---
                     while not transfer.pause_event.is_set():
@@ -688,13 +694,15 @@ class TransferManager:
 
                     if transfer.cancel_event.is_set():
                         transfer.status = TransferStatus.CANCELED
-                        self.logger.info(f"Transfer {transfer.id} canceled before starting transfer.")
+                        self.logger.info(f"Transfer {transfer.id} canceled during progress update.")
                         return
                     # Check if transfer was canceled or paused
                     if transfer.status in [TransferStatus.CANCELED, TransferStatus.PAUSED]:
                         raise InterruptedError("Transfer was canceled or paused")
                 except Exception as e:
                     self.logger.error(f"Error in progress wrapper for transfer {transfer.id}: {str(e)}")
+                    # Disable progress callback on error to prevent further crashes
+                    transfer._progress_callback = None
             
             # Process based on transfer type with isolated error handling
             if transfer.transfer_type == TransferType.UPLOAD:
@@ -865,9 +873,28 @@ class TransferManager:
 
 
             # --- STEP 4: Compare Hashes ---
+            # Disable progress callback EARLY to prevent threading issues during completion
+            original_callback = transfer._progress_callback
+            transfer._progress_callback = None
+            
+            # Add a small delay to ensure any in-flight progress callbacks complete
+            time.sleep(0.1)
+            
             if source_hash and destination_hash and source_hash == destination_hash:
                 transfer.status = TransferStatus.COMPLETED
                 self.logger.info(f"Integrity check passed for {transfer.source_path} -> {transfer.dest_path}")
+                
+                # Trigger final progress callback manually in a safe way
+                if original_callback and transfer.total_bytes > 0:
+                    try:
+                        # Use a separate thread to avoid blocking and ensure it's the last callback
+                        final_callback_thread = threading.Thread(
+                            target=lambda: self._safe_final_callback(original_callback, transfer),
+                            daemon=True
+                        )
+                        final_callback_thread.start()
+                    except Exception as callback_error:
+                        self.logger.error(f"Error in final progress callback for transfer {transfer.id}: {str(callback_error)}")
             else:
                 transfer.status = TransferStatus.FAILED
                 transfer.error_message = f"File integrity check failed for {transfer.source_path} -> {transfer.dest_path}: Source and destination file hash do not match. Source Hash: {source_hash}, Dest Hash: {destination_hash}"
@@ -886,37 +913,92 @@ class TransferManager:
             self.logger.error(f"Unexpected error in transfer {transfer.id}: {str(e)}", exc_info=True)
             
         finally:
-            # Always disconnect the client when transfer is complete
+            # Always disconnect the client when transfer is complete with enhanced error isolation
             try:
-                # Disconnect any clients opened for transfer
-                if source_client and source_client.ssh:
-                    source_client.disconnect()
-                if dest_client and dest_client.ssh:
-                    dest_client.disconnect()
+                # Disable any remaining progress callbacks immediately to prevent race conditions
+                transfer._progress_callback = None
+                
+                # Add a brief delay to ensure any in-flight callbacks complete before disconnection
+                time.sleep(0.05)
+                
+                # Disconnect clients in separate try-catch blocks to isolate failures
+                if source_client:
+                    try:
+                        if hasattr(source_client, 'ssh') and source_client.ssh:
+                            source_client.disconnect()
+                            self.logger.debug(f"Source client disconnected for transfer {transfer.id}")
+                    except Exception as src_disconnect_error:
+                        self.logger.warning(f"Error disconnecting source client for transfer {transfer.id}: {str(src_disconnect_error)}")
+                
+                if dest_client:
+                    try:
+                        if hasattr(dest_client, 'ssh') and dest_client.ssh:
+                            dest_client.disconnect()
+                            self.logger.debug(f"Destination client disconnected for transfer {transfer.id}")
+                    except Exception as dest_disconnect_error:
+                        self.logger.warning(f"Error disconnecting destination client for transfer {transfer.id}: {str(dest_disconnect_error)}")
+                
                 self.logger.info(f"Disconnected SFTP client for transfer {transfer.id}")
+                
             except Exception as disconnect_error:
-                self.logger.warning(f"Error disconnecting client for transfer {transfer.id}: {str(disconnect_error)}")
+                self.logger.warning(f"Error in client disconnection process for transfer {transfer.id}: {str(disconnect_error)}")
             
-            # Record end time and cleanup
+            # Record end time and cleanup with enhanced safety
             try:
                 transfer.end_time = time.time()
+                
+                # Clear client references to help garbage collection
+                source_client = None
+                dest_client = None
+                source_config = None
+                dest_config = None
                 
                 # Force garbage collection to clear any lingering credential references
                 gc.collect()
                 
-                # Move from active to history
-                with self.lock:
-                    if transfer.id in self.active_transfers:
-                        del self.active_transfers[transfer.id]
-                        self.transfer_history.append(transfer)
+                # Move from active to history with proper synchronization
+                cleanup_successful = False
+                try:
+                    with self.lock:
+                        if transfer.id in self.active_transfers:
+                            del self.active_transfers[transfer.id]
+                            # Only add to history if not already there
+                            if transfer not in self.transfer_history:
+                                self.transfer_history.append(transfer)
+                            cleanup_successful = True
+                except Exception as lock_error:
+                    self.logger.error(f"Error during lock-protected cleanup for transfer {transfer.id}: {str(lock_error)}")
+                    # Try without lock as fallback
+                    try:
+                        if transfer.id in self.active_transfers:
+                            del self.active_transfers[transfer.id]
+                        if transfer not in self.transfer_history:
+                            self.transfer_history.append(transfer)
+                        cleanup_successful = True
+                    except Exception as fallback_error:
+                        self.logger.error(f"Fallback cleanup also failed for transfer {transfer.id}: {str(fallback_error)}")
 
-                self.logger.info(f"Transfer {transfer.id} completed with status {transfer.status.name}: {transfer.source_path} -> {transfer.dest_path}")
+                if cleanup_successful:
+                    self.logger.info(f"Transfer {transfer.id} completed with status {transfer.status.name}: {transfer.source_path} -> {transfer.dest_path}")
+                else:
+                    self.logger.error(f"Transfer {transfer.id} completed but cleanup failed")
             
             except Exception as cleanup_error:
                 self.logger.error(f"Error during cleanup for transfer {transfer.id}: {str(cleanup_error)}")
+                # Even if cleanup fails, log the transfer completion
+                try:
+                    self.logger.info(f"Transfer {transfer.id} finished with status {transfer.status.name} (cleanup errors occurred)")
+                except:
+                    self.logger.error(f"Transfer {transfer.id} finished but status logging failed")
     
-    # Removed the _register_progress_callback and _hook_progress_callback methods
-    # as the callback is now passed directly to TransferItem on creation.
+    def _safe_final_callback(self, callback, transfer):
+        """Safely execute the final progress callback for a completed transfer"""
+        try:
+            if callback and transfer.total_bytes > 0:
+                # Call with 100% completion
+                callback(transfer.id, transfer.total_bytes, transfer.total_bytes)
+        except Exception as e:
+            self.logger.error(f"Error in safe final callback for transfer {transfer.id}: {str(e)}")
 
     def upload_file(self, local_path: str, remote_path: str, server_config: Dict, progress_callback: Callable = None, overwrite_callback: Callable = None) -> int:
         """

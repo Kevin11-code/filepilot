@@ -1,7 +1,10 @@
-from PyQt5.QtWidgets import QDialog, QVBoxLayout, QFormLayout, QLineEdit, QSpinBox, QComboBox, QPushButton, QHBoxLayout, QCheckBox, QDialogButtonBox, QFileDialog, QMessageBox
+from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QLineEdit, QSpinBox, QComboBox, QPushButton, QHBoxLayout, QCheckBox, QDialogButtonBox, QFileDialog)
+from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QFont
+from code.gui.custom_message_box import CustomMessageBox, SFTPMessages
 from code.core.auth_manager import AuthManager
 from code.core.sftp_client import SFTPClient
-from code.utils.secure_string import SecureTemporaryCredentials
+from code.utils.secure_string import SecureString, SecureTemporaryCredentials
 
 class ConnectionDialog(QDialog):
     """Dialog for creating and editing SFTP connections"""
@@ -175,7 +178,7 @@ class ConnectionDialog(QDialog):
         username = self.username_edit.text()
         
         if not (host and username):
-            QMessageBox.warning(self, "Input Error", "Host and username are required.")
+            CustomMessageBox.warning(self, "Input Error", "Host and username are required.")
             return
         
         # Create client
@@ -193,7 +196,7 @@ class ConnectionDialog(QDialog):
         else:
             key_path = self.key_path_edit.text()
             if not key_path:
-                QMessageBox.warning(self, "Input Error", "Key file path is required.")
+                CustomMessageBox.warning(self, "Input Error", "Key file path is required.")
                 return
                 
             params['key_path'] = key_path
@@ -205,11 +208,14 @@ class ConnectionDialog(QDialog):
             with SecureTemporaryCredentials(params) as temp_params:
                 if client.connect(**temp_params):
                     client.disconnect()
-                    QMessageBox.information(self, "Success", "Connection successful!")
+                    title, text = SFTPMessages.CONNECTION_SUCCESS
+                    CustomMessageBox.information(self, title, text)
                 else:
-                    QMessageBox.critical(self, "Error", "Connection failed.")
+                    title, text = SFTPMessages.CONNECTION_FAILED
+                    CustomMessageBox.critical(self, title, text)
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Connection error: {str(e)}")
+            title, text = SFTPMessages.CONNECTION_FAILED
+            CustomMessageBox.critical(self, title, f"Connection error: {str(e)}")
     
     def save_connection(self):
         """Save the connection to storage"""
@@ -219,7 +225,7 @@ class ConnectionDialog(QDialog):
         username = self.username_edit.text()
         
         if not (name and host and username):
-            QMessageBox.warning(self, "Input Error", "Name, host and username are required.")
+            CustomMessageBox.warning(self, "Input Error", "Name, host and username are required.")
             return
         
         # Get auth parameters
@@ -238,7 +244,7 @@ class ConnectionDialog(QDialog):
         if self.encrypt_config.isChecked():
             encryption_password = self.encryption_password.text()
             if not encryption_password:
-                QMessageBox.warning(self, "Input Error", "Encryption password is required when encryption is enabled.")
+                CustomMessageBox.warning(self, "Input Error", "Encryption password is required when encryption is enabled.")
                 return
             
         # Save connection using the secure method
@@ -259,6 +265,6 @@ class ConnectionDialog(QDialog):
             if success:
                 self.accept()  # Close dialog
             else:
-                QMessageBox.critical(self, "Error", "Failed to save connection.")
+                CustomMessageBox.critical(self, "Error", "Failed to save connection.")
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Error saving connection: {str(e)}")
+            CustomMessageBox.critical(self, "Error", f"Error saving connection: {str(e)}")

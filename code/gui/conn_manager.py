@@ -1,7 +1,9 @@
-from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTableWidget,
-                           QAbstractItemView, QHeaderView, QPushButton,
-                           QTableWidgetItem, QMessageBox, QInputDialog, QLineEdit)
+from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QTableWidget,
+                           QTableWidgetItem, QInputDialog, QLineEdit, QWidget, QAbstractItemView, QHeaderView)
+from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtGui import QFont
 from code.gui.conn_dialog import ConnectionDialog
+from code.gui.custom_message_box import CustomMessageBox
 
 class ConnectionManagerDialog(QDialog):
     """Dialog for managing saved SFTP connections"""
@@ -93,7 +95,7 @@ class ConnectionManagerDialog(QDialog):
         """Edit the selected connection"""
         selected_rows = self.table.selectedItems()
         if not selected_rows:
-            QMessageBox.warning(self, "No Selection", "Please select a connection to edit.")
+            CustomMessageBox.warning(self, "No Selection", "Please select a connection to edit.")
             return
         
         # Get selected connection name
@@ -113,7 +115,7 @@ class ConnectionManagerDialog(QDialog):
         """Delete the selected connection"""
         selected_rows = self.table.selectedItems()
         if not selected_rows:
-            QMessageBox.warning(self, "No Selection", "Please select a connection to delete.")
+            CustomMessageBox.warning(self, "No Selection", "Please select a connection to delete.")
             return
         
         # Get selected connection name
@@ -121,12 +123,12 @@ class ConnectionManagerDialog(QDialog):
         connection_name = self.table.item(row, 0).text()
         
         # Confirm deletion
-        reply = QMessageBox.question(self, "Confirm Deletion", 
+        reply = CustomMessageBox.question(self, "Confirm Deletion", 
                                      f"Are you sure you want to delete the connection '{connection_name}'?",
-                                     QMessageBox.Yes | QMessageBox.No,
-                                     QMessageBox.No)
+                                     CustomMessageBox.Yes | CustomMessageBox.No,
+                                     CustomMessageBox.No)
                                      
-        if reply == QMessageBox.Yes:
+        if reply == CustomMessageBox.Yes:
             # Ask for encryption password if needed
             encrypt_password = None
             try:
@@ -150,6 +152,6 @@ class ConnectionManagerDialog(QDialog):
                             if parent and hasattr(parent, 'refresh_connections'):
                                 parent.refresh_connections()
                         else:
-                            QMessageBox.critical(self, "Error", "Failed to delete the connection. Incorrect password?")
+                            CustomMessageBox.critical(self, "Error", "Failed to delete the connection. Incorrect password?")
             except Exception as e:
-                QMessageBox.critical(self, "Error", f"Error deleting connection: {str(e)}")
+                CustomMessageBox.critical(self, "Error", f"Error deleting connection: {str(e)}")

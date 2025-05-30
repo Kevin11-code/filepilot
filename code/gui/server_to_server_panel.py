@@ -7,6 +7,7 @@ import secrets
 
 import os
 from code.gui.file_panel import FilePanel
+from code.gui.custom_message_box import CustomMessageBox
 from code.core.auth_manager import AuthManager
 from code.core.sftp_client import SFTPClient
 from code.core.transfer_manager import TransferManager, TransferType
@@ -114,7 +115,7 @@ class ServerToServerPanel(DualPanelWidget):
         This method initiates a server-to-server transfer.
         """
         if not self.source_panel.client or not self.destination_panel.client:
-            QMessageBox.warning(self, "Connection Error", "Please connect to both source and destination servers.")
+            CustomMessageBox.warning(self, "Connection Error", "Please connect to both source and destination servers.")
             return
 
         source_full_path = posixpath.normpath(path.replace("\\", "/"))
@@ -125,11 +126,11 @@ class ServerToServerPanel(DualPanelWidget):
         # print(f"Destination full path: {dest_full_path}")
 
         if is_dir:
-            reply = QMessageBox.question(
+            reply = CustomMessageBox.question(
                 self, "Transfer Directory",
                 f"Transfer directory '{os.path.basename(path)}' from source to destination '{dest_full_path}'?",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
-            if reply != QMessageBox.Yes:
+                CustomMessageBox.Yes | CustomMessageBox.No, CustomMessageBox.Yes)
+            if reply != CustomMessageBox.Yes:
                 return
         else:
             # For files, allow user to specify destination filename/path
@@ -151,13 +152,13 @@ class ServerToServerPanel(DualPanelWidget):
             dest_exists = False
 
         if dest_exists:
-            reply = QMessageBox.question(
+            reply = CustomMessageBox.question(
                 self, "File Exists",
                 f"The file '{os.path.basename(dest_full_path)}' already exists on the destination server.\n\n"
                 f"Destination path: {dest_full_path}\n\n"
                 "Do you want to overwrite it?",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-            if reply != QMessageBox.Yes:
+                CustomMessageBox.Yes | CustomMessageBox.No, CustomMessageBox.No)
+            if reply != CustomMessageBox.Yes:
                 return
         # Create overwrite callback for server-to-server transfer
         def s2s_overwrite_callback(file_path):
@@ -173,7 +174,7 @@ class ServerToServerPanel(DualPanelWidget):
         dest_config = self.auth_manager.get_connection_secure(dest_conn_name)
 
         if not source_config or not dest_config:
-            QMessageBox.critical(self, "Configuration Error", "Could not retrieve connection details for transfer.")
+            CustomMessageBox.critical(self, "Configuration Error", "Could not retrieve connection details for transfer.")
             return
 
         # Queue the server-to-server transfer with secure credential handling
@@ -191,15 +192,15 @@ class ServerToServerPanel(DualPanelWidget):
             )
 
             if transfer_id:
-                QMessageBox.information(self, "Transfer Started", f"Server-to-server transfer started with ID: {transfer_id}")
+                CustomMessageBox.information(self, "Transfer Started", f"Server-to-server transfer started with ID: {transfer_id}")
                 # Force immediate update of the transfer panel in MainWindow
                 if hasattr(self.parent(), 'transfer_panel'):
                     self.parent().transfer_panel.update_transfers()
             else:
-                QMessageBox.critical(self, "Transfer Failed", "Failed to start server-to-server transfer.")
+                CustomMessageBox.critical(self, "Transfer Failed", "Failed to start server-to-server transfer.")
                 
         except Exception as e:
-            QMessageBox.critical(self, "Transfer Failed", f"Failed to start transfer: {e}")
+            CustomMessageBox.critical(self, "Transfer Failed", f"Failed to start transfer: {e}")
         finally:
             # Force garbage collection to clear any lingering credential references
             gc.collect()

@@ -1,10 +1,13 @@
 import logging
 import os
+import threading
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QTabWidget, QTableWidget, QHBoxLayout, QPushButton,
                             QAbstractItemView, QHeaderView, QTableWidgetItem, QMessageBox, QProgressBar,
-                            QLabel, QFrame, QPlainTextEdit)
-from PyQt5.QtCore import QTimer, Qt
+                            QLabel, QFrame, QPlainTextEdit, QApplication)
+from PyQt5.QtCore import QTimer, Qt, QThread
 from PyQt5.QtGui import QFont, QColor
+
+from code.gui.custom_message_box import CustomMessageBox
 
 # Ensure log directory exists
 os.makedirs("logs", exist_ok=True)
@@ -22,6 +25,14 @@ class TransferPanel(QWidget):
     def __init__(self, parent=None, transfer_manager=None):
         super().__init__(parent)
         self.transfer_manager = transfer_manager
+        
+        # Add update throttling to prevent race conditions
+        self._update_lock = threading.Lock()
+        self._update_pending = False
+        self._throttle_timer = QTimer()
+        self._throttle_timer.setSingleShot(True)
+        self._throttle_timer.timeout.connect(self._perform_update)
+        
         self.setup_ui()
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_transfers)
@@ -279,34 +290,72 @@ class TransferPanel(QWidget):
         table.verticalHeader().setVisible(False)
     
     def update_transfers(self):
-        """Update the transfer tables with current status"""
+        """Update the transfer tables with current status using throttled updates"""
         if not self.transfer_manager:
             return
+        
+        # Use throttled updates to prevent race conditions during rapid transfer changes
+        with self._update_lock:
+            if not self._update_pending:
+                self._update_pending = True
+                if not self._throttle_timer.isActive():
+                    self._throttle_timer.start(100)  # 100ms throttle
+    
+    def _perform_update(self):
+        """Perform the actual update in a thread-safe manner"""
+        try:
+            if not QApplication.instance() or QApplication.instance().closingDown():
+                return
             
-        transfers = self.transfer_manager.get_all_transfers()
-        
-        # Update active transfers
-        self.update_table(self.active_table, transfers['active'])
-        
-        # Update queued transfers
-        self.update_table(self.queued_table, transfers['queued'])
-        
-        # Update history
-        self.update_table(self.history_table, transfers['history'])
-        
-        # Update tab counters with additional info for active transfers
-        active_count = len(transfers['active'])
-        queued_count = len(transfers['queued'])
-        history_count = len(transfers['history'])
-        
-        # Show concurrent limit info for active transfers
-        max_concurrent = self.transfer_manager.max_concurrent if self.transfer_manager else 3
-        self.tabs.setTabText(0, f"Active ({active_count}/{max_concurrent})")
-        self.tabs.setTabText(1, f"Queued ({queued_count})")
-        self.tabs.setTabText(2, f"History ({history_count})")
+            with self._update_lock:
+                self._update_pending = False
+            
+            if not self.transfer_manager:
+                return
+                
+            transfers = self.transfer_manager.get_all_transfers()
+            
+            # Update active transfers
+            self._safe_update_table(self.active_table, transfers['active'])
+            
+            # Update queued transfers
+            self._safe_update_table(self.queued_table, transfers['queued'])
+            
+            # Update history
+            self._safe_update_table(self.history_table, transfers['history'])
+            
+            # Update tab counters with additional info for active transfers
+            active_count = len(transfers['active'])
+            queued_count = len(transfers['queued'])
+            history_count = len(transfers['history'])
+            
+            # Show concurrent limit info for active transfers
+            max_concurrent = self.transfer_manager.max_concurrent if self.transfer_manager else 3
+            self.tabs.setTabText(0, f"Active ({active_count}/{max_concurrent})")
+            self.tabs.setTabText(1, f"Queued ({queued_count})")
+            self.tabs.setTabText(2, f"History ({history_count})")
+            
+        except Exception as e:
+            logging.error(f"Error in transfer panel update: {str(e)}")
+    
+    def _safe_update_table(self, table, transfers):
+        """Safely update a table with error handling"""
+        try:
+            if not QApplication.instance() or QApplication.instance().closingDown():
+                return
+            
+            self.update_table(table, transfers)
+        except Exception as e:
+            logging.error(f"Error updating transfer table: {str(e)}")
     
     def update_table(self, table, transfers):
         """Update a table with transfer data using minimalist black/white design"""
+        # Ensure this method only runs on the main thread
+        if not QApplication.instance() or QThread.currentThread() != QApplication.instance().thread():
+            # If called from a worker thread, schedule on main thread
+            QTimer.singleShot(0, lambda: self.update_table(table, transfers))
+            return
+            
         table.setRowCount(len(transfers))
         
         for row, transfer in enumerate(transfers):
@@ -357,51 +406,24 @@ class TransferPanel(QWidget):
             
             table.setItem(row, 4, status_item)
             
-            # Minimalist progress bar
-            progress_widget = QWidget()
-            progress_layout = QVBoxLayout(progress_widget)
-            progress_layout.setContentsMargins(0, 0, 0, 0)
-            progress_layout.setSpacing(0)  # No spacing for compact look
-            
-            progress_bar = QProgressBar()
-            progress_bar.setStyleSheet("""
-                QProgressBar {
-                    border: 1px solid #e5e5e5;
-                    border-radius: 2px;
-                    text-align: center;
-                    font-size: 11px;
-                    height: 14px;
-                    background-color: #00FF00;
-                }
-                QProgressBar::chunk {
-                    background-color: #1a1a1a;
-                    border-radius: 1px;
-                }
-            """)
-            progress_bar.setTextVisible(True)
-            # Parse progress percentage
+            # Use text-based progress instead of QProgressBar to avoid widget threading issues
+            progress_text = transfer['progress']
             try:
-                progress_text = transfer['progress']
                 if '%' in progress_text:
-                    # Extract numeric value from percentage string
                     progress_value = float(progress_text.replace('%', '').strip())
-                    progress_bar.setValue(int(progress_value))
-                    progress_bar.setFormat(f"{progress_value:.1f}%")
+                    progress_display = f"{progress_value:.1f}%"
                 else:
-                    # Handle non-percentage progress values
                     try:
                         progress_value = float(progress_text)
-                        progress_bar.setValue(int(progress_value))
-                        progress_bar.setFormat(f"{progress_value:.1f}%")
+                        progress_display = f"{progress_value:.1f}%"
                     except (ValueError, TypeError):
-                        progress_bar.setValue(0)
-                        progress_bar.setFormat(str(progress_text))
+                        progress_display = str(progress_text)
             except (ValueError, TypeError, AttributeError):
-                progress_bar.setValue(0)
-                progress_bar.setFormat("—")
+                progress_display = "—"
             
-            progress_layout.addWidget(progress_bar)
-            table.setCellWidget(row, 5, progress_widget)
+            progress_item = QTableWidgetItem(progress_display)
+            progress_item.setTextAlignment(Qt.AlignCenter)
+            table.setItem(row, 5, progress_item)
             
             # Speed and Size with clean formatting
             speed_item = QTableWidgetItem(transfer['rate'])
@@ -612,13 +634,15 @@ class TransferPanel(QWidget):
         if not selected_rows:
             return
             
-        msg_box = QMessageBox()
-        msg_box.setIcon(QMessageBox.Warning)
-        msg_box.setText("Are you sure you want to cancel the selected transfers?")
-        msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        msg_box.setDefaultButton(QMessageBox.No)
+        result = CustomMessageBox.question(
+            self, 
+            "Cancel Transfers",
+            "Are you sure you want to cancel the selected transfers?",
+            CustomMessageBox.Yes | CustomMessageBox.No,
+            CustomMessageBox.No
+        )
         
-        if msg_box.exec_() == QMessageBox.Yes:
+        if result == CustomMessageBox.Yes:
             for row in selected_rows:
                 transfer_id = int(current_table.item(row, 0).text())
                 if self.transfer_manager:
