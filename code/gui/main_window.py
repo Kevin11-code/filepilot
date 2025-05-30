@@ -7,7 +7,8 @@ from PyQt5.QtWidgets import (
     QLabel, QLineEdit, QTabWidget, QFileDialog, QMessageBox, QTreeView, 
     QHeaderView, QAbstractItemView, QProgressBar, QMenu, QAction, QComboBox,
     QDialog, QDialogButtonBox, QFormLayout, QSpinBox, QCheckBox, QTableWidget,
-    QTableWidgetItem, QSplitter, QFrame, QInputDialog, QStyle, QStackedWidget
+    QTableWidgetItem, QSplitter, QFrame, QInputDialog, QStyle, QStackedWidget,
+    QPlainTextEdit
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QModelIndex, QSize, QSettings, QObject
 from PyQt5.QtGui import QIcon, QStandardItemModel, QStandardItem, QFont
@@ -153,6 +154,38 @@ class MainWindow(QMainWindow):
         main_layout = QVBoxLayout(central_widget)
         main_layout.setContentsMargins(10, 10, 10, 10)
         main_layout.setSpacing(5)
+
+        # --- Activity Panel (logs) ---
+        self.activity_view = QPlainTextEdit()
+        self.activity_view.setReadOnly(True)
+        self.activity_view.setStyleSheet("""
+            QPlainTextEdit {
+                background-color: #ffffff;
+                color: #222222;
+                font-family: 'Consolas', 'JetBrains Mono', 'monospace';
+                font-size: 11px;
+                border: 1px solid #e5e5e5;
+                padding: 8px;
+            }
+        """)
+        self._activity_log_last_pos = 0
+        log_path = os.path.join(os.path.dirname(__file__), "..", "logs", "filepilot.log")
+        log_path = os.path.abspath(log_path)
+        try:
+            with open(log_path, "rb") as f:
+                f.seek(0, os.SEEK_END)
+                self._activity_log_last_pos = f.tell()
+        except Exception:
+            self._activity_log_last_pos = 0
+
+        self.activity_timer = QTimer(self)
+        self.activity_timer.timeout.connect(self.update_activity_view)
+        self.activity_timer.start(1000)
+
+        # --- Splitter for activity panel and main content ---
+        main_splitter = QSplitter(Qt.Vertical)
+        main_splitter.setHandleWidth(6)
+        main_splitter.addWidget(self.activity_view)
         
         # Split view with file panels and transfer panel
         splitter = QSplitter(Qt.Vertical)
@@ -187,7 +220,12 @@ class MainWindow(QMainWindow):
         # Set initial sizes
         splitter.setSizes([400, 200]) #
         
-        main_layout.addWidget(splitter)
+        main_splitter.addWidget(splitter)  # 'splitter' is your main content (file panels, transfer panel, etc.)
+
+        # Set initial sizes: [activity panel height, rest of window]
+        main_splitter.setSizes([140, 600])
+
+        main_layout.addWidget(main_splitter)
         
         # Status bar with modern styling
         self.status_bar = self.statusBar()
@@ -786,6 +824,30 @@ class MainWindow(QMainWindow):
                           "<p>A simple SFTP client using PyQt and Paramiko.</p>"
                           "<p>Copyright © 2025 ALT+F4</p>"
                           "<p><a href='https://www.altf4.com'>www.altf4.com</a></p>") #
+
+    def update_activity_view(self):
+        log_path = os.path.join(os.path.dirname(__file__), "..", "logs", "filepilot.log")
+        log_path = os.path.abspath(log_path)
+        if not hasattr(self, "_activity_log_last_pos"):
+            self._activity_log_last_pos = 0
+        try:
+            with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
+                f.seek(self._activity_log_last_pos)
+                new_lines = f.readlines()
+                display_lines = []
+                for line in new_lines:
+                    if " - " in line:
+                        _, msg = line.split(" - ", 1)
+                    else:
+                        msg = line
+                    display_lines.append(msg.strip())
+                if display_lines:
+                    self.activity_view.moveCursor(self.activity_view.textCursor().End)
+                    self.activity_view.insertPlainText('\n'.join(display_lines) + '\n')
+                    self.activity_view.moveCursor(self.activity_view.textCursor().End)
+                self._activity_log_last_pos = f.tell()
+        except Exception as e:
+            self.activity_view.setPlainText(f"Could not read log file:\n{e}")
 
 
 def run_app():
