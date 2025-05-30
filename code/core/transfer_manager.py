@@ -139,7 +139,18 @@ class TransferManager:
             self.logger = logger
         else:
             self.logger = logging.getLogger(__name__)
-            
+
+    def clear_completed_transfers(self):
+        """
+        Remove completed, canceled, and failed transfers from the history.
+        """
+        with self.lock:
+            self.transfer_history = [
+                t for t in self.transfer_history
+                if str(t.status) not in ("COMPLETED", "CANCELED", "FAILED")
+                and getattr(t.status, "name", str(t.status)) not in ("COMPLETED", "CANCELED", "FAILED")
+            ]
+                  
     def start(self):
         """Start the transfer manager worker thread."""
         if not self.worker_thread or not self.worker_thread.is_alive():

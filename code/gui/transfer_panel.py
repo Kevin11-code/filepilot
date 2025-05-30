@@ -164,6 +164,8 @@ class TransferPanel(QWidget):
         
         self.clear_button = QPushButton("Clear")
         self.clear_button.setStyleSheet(button_style)
+        self.clear_button.setToolTip("Remove completed/canceled/failed transfers from history")
+        self.clear_button.clicked.connect(self.clear_completed)
         
         self.pause_button.clicked.connect(self.pause_selected)
         self.resume_button.clicked.connect(self.resume_selected)
@@ -652,7 +654,16 @@ class TransferPanel(QWidget):
         """Clear completed transfers from the history"""
         # This would require adding a method to the TransferManager
         # For now, we'll just refresh the display
-        self.update_transfers()
+        result = CustomMessageBox.question(
+            self,
+            "Clear Completed Transfers",
+            "Are you sure you want to clear your history?",
+            CustomMessageBox.Yes | CustomMessageBox.No,
+            CustomMessageBox.No
+        )
+        if result == CustomMessageBox.Yes and self.transfer_manager:
+            self.transfer_manager.clear_completed_transfers()
+            self.update_transfers()
     
     def _truncate_path(self, path, max_length=40):
         """Truncate long paths for clean display"""
