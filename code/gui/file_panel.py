@@ -618,44 +618,42 @@ class FilePanel(QWidget):
                                             CustomMessageBox.Yes | CustomMessageBox.No) == CustomMessageBox.Yes:
                         self.itemSelected.emit(full_path, False)
 
-
     def open_file(self, file_path):
         """Opens a file using the default system application."""
         if self.is_remote:
-            CustomMessageBox.information(self, "Open File", "Remote files cannot be opened directly from here. Please download them first.")
-        else:
-            if not os.path.exists(file_path):
-                CustomMessageBox.warning(self, "File Not Found", f"The file '{file_path}' does not exist.")
-                return
+            CustomMessageBox.information(self, "Open File", 
+                "Remote files cannot be opened directly from here. Please download them first.")
+            return
+        
+        if not os.path.exists(file_path):
+            CustomMessageBox.warning(self, "File Not Found", 
+                f"The file '{file_path}' does not exist.")
+            return
             
-            url = QUrl.fromLocalFile(file_path)
-            if not QDesktopServices.openUrl(url):
-                CustomMessageBox.warning(self, "Error", f"Could not open file: {file_path}")
+        if not self.check_permissions(file_path, os.R_OK):
+            CustomMessageBox.warning(self, "Permission Denied", 
+                "Cannot open file: Read permission required.")
+            return
+            
+        url = QUrl.fromLocalFile(file_path)
+        if not QDesktopServices.openUrl(url):
+            CustomMessageBox.warning(self, "Error", f"Could not open file: {file_path}")
 
     def delete_item(self, path, is_dir):
         """Deletes a file or directory with thread-safe UI updates and permission checks."""
         try:
-            # First check permissions before attempting deletion
-            if self.is_remote:
-                if not self.client:
-                    CustomMessageBox.warning(self, "Delete Error", "Not connected to remote server.")
-                    return
+            # Check write permissions on both the item and its parent directory
+            parent_dir = os.path.dirname(path)
+            
+            if not self.check_permissions(path, os.W_OK):
+                CustomMessageBox.warning(self, "Permission Denied", 
+                    "Cannot delete: Write permission required for this item.")
+                return
                 
-                # Get file attributes to check permissions
-                attrs = self.client.stat(path)
-                mode = attrs.st_mode
-                
-                # Check if we have write permission
-                if not (mode & stat.S_IWUSR):  # Check for write permission
-                    CustomMessageBox.warning(self, "Permission Denied", 
-                        "Cannot delete: Insufficient permissions. Write permission is required.")
-                    return
-            else:
-                # Local file permission check
-                if not os.access(path, os.W_OK):
-                    CustomMessageBox.warning(self, "Permission Denied", 
-                        "Cannot delete: Insufficient permissions. Write permission is required.")
-                    return
+            if not self.check_permissions(parent_dir, os.W_OK):
+                CustomMessageBox.warning(self, "Permission Denied", 
+                    "Cannot delete: Write permission required for parent directory.")
+                return
 
             # If permissions are OK, proceed with deletion
             success = False
@@ -701,6 +699,19 @@ class FilePanel(QWidget):
     def rename_item(self, old_path, new_path):
         """Renames a file or directory with thread-safe UI updates."""
         try:
+            # Check permissions
+            parent_dir = os.path.dirname(old_path)
+            
+            if not self.check_permissions(old_path, os.W_OK):
+                CustomMessageBox.warning(self, "Permission Denied", 
+                    "Cannot rename: Write permission required for this item.")
+                return
+                
+            if not self.check_permissions(parent_dir, os.W_OK):
+                CustomMessageBox.warning(self, "Permission Denied", 
+                    "Cannot rename: Write permission required for parent directory.")
+                return
+
             success = False
             if self.is_remote:
                 if self.client:
@@ -896,6 +907,32 @@ class FilePanel(QWidget):
                 self._schedule_safe_refresh()
         except Exception as e:
             CustomMessageBox.critical(self, "Error", f"Failed to change permissions: {e}")
+
+    def check_permissions(self, path, required_permission):
+        """
+        Check if we have the required permissions for a file/directory operation.
+        required_permission can be: os.W_OK, os.R_OK, os.X_OK
+        """
+        try:
+            if self.is_remote:
+                if not self.client:
+                    return False
+                # Get remote file attributes
+                attrs = self.client.stat(path)
+                mode = attrs.st_mode
+                
+                # Map os.* permission constants to stat.* constants
+                perm_map = {
+                    os.W_OK: stat.S_IWUSR,
+                    os.R_OK: stat.S_IRUSR,
+                    os.X_OK: stat.S_IXUSR
+                }
+                
+                return bool(mode & perm_map[required_permission])
+            else:
+                return os.access(path, required_permission)
+        except Exception:
+            return False
 
 class PermissionsDialog(QDialog):
     def __init__(self, parent, current_mode):
