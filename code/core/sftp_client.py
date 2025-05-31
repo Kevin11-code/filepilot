@@ -941,7 +941,8 @@ class SFTPClient:
                                 dest_path: str,
                                 chunk_size: int = 1048576,  # e.g., 1MB chunks
                                 progress_callback: Callable = None,
-                                overwrite_callback: Callable[[str], bool] = None) -> bool:
+                                overwrite_callback: Callable[[str], bool] = None,
+                                cancel_event=None) -> bool:
         """
         Streams a file directly from one remote SFTP server to another
         without saving it to the local disk.
@@ -980,6 +981,9 @@ class SFTPClient:
                 # 'wb' mode for binary write; creates file if it doesn't exist, truncates if it does
                 with dest_client.sftp.open(dest_path, 'wb') as sftp_dest_file:
                     while True:
+                        if (cancel_event and cancel_event.is_set()):
+                            self.logger.info("Streaming transfer cancelled by user.")
+                            return False
                         chunk = sftp_source_file.read(chunk_size)
                         if not chunk:
                             break  # End of file

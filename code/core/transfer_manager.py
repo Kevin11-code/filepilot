@@ -819,29 +819,32 @@ class TransferManager:
                 
                 # server to server file transfer     
                 client = SFTPClient(logger=self.logger)      
-                result = client.server_to_server_transfer(
-                    source_config,
-                    dest_config,
+                # result = client.server_to_server_transfer(
+                #     source_config,
+                #     dest_config,
+                #     transfer.source_path,
+                #     transfer.dest_path,
+                #     chunks=transfer.chunks,
+                #     progress_callback=sftp_progress_wrapper,
+                #     overwrite_callback=s2s_overwrite_callback,
+                #     cancel_event=transfer.cancel_event
+                # )
+        
+                # Server to server using buffer of our machine, does not store on disk
+                result = client.stream_remote_to_remote(
+                    source_client,
                     transfer.source_path,
+                    dest_client,
                     transfer.dest_path,
-                    chunks=transfer.chunks,
-                    progress_callback=sftp_progress_wrapper,
+                    progress_callback=sftp_progress_wrapper, # Pass our wrapper
                     overwrite_callback=s2s_overwrite_callback,
                     cancel_event=transfer.cancel_event
                 )
+
                 if transfer.cancel_event.is_set():
                     transfer.status = TransferStatus.CANCELED
                     self.logger.info(f"Transfer {transfer.id} canceled after server_to_server_transfer call.")
                     return
-                # Server to server using buffer of our machine, does not store on disk
-                # result = client.stream_remote_to_remote(
-                #     source_client,
-                #     transfer.source_path,
-                #     dest_client,
-                #     transfer.dest_path,
-                #     progress_callback=sftp_progress_wrapper, # Pass our wrapper
-                #     overwrite_callback=s2s_overwrite_callback
-                # )
 
                 if not result:
                     transfer.status = TransferStatus.FAILED
