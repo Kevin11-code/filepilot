@@ -633,45 +633,70 @@ class FilePanel(QWidget):
                 CustomMessageBox.warning(self, "Error", f"Could not open file: {file_path}")
 
     def delete_item(self, path, is_dir):
-        """Deletes a file or directory with thread-safe UI updates."""
+        """Deletes a file or directory with thread-safe UI updates and permission checks."""
         try:
-            success = False
+            # First check permissions before attempting deletion
             if self.is_remote:
-                if self.client:
-                    if is_dir:
-                        success = self.client.rmdir(path) # This now handles recursive deletion
-                    else:
-                        success = self.client.remove(path)
-                else:
+                if not self.client:
                     CustomMessageBox.warning(self, "Delete Error", "Not connected to remote server.")
                     return
-            else: # Local file/directory
+                
+                # Get file attributes to check permissions
+                attrs = self.client.stat(path)
+                mode = attrs.st_mode
+                
+                # Check if we have write permission
+                if not (mode & stat.S_IWUSR):  # Check for write permission
+                    CustomMessageBox.warning(self, "Permission Denied", 
+                        "Cannot delete: Insufficient permissions. Write permission is required.")
+                    return
+            else:
+                # Local file permission check
+                if not os.access(path, os.W_OK):
+                    CustomMessageBox.warning(self, "Permission Denied", 
+                        "Cannot delete: Insufficient permissions. Write permission is required.")
+                    return
+
+            # If permissions are OK, proceed with deletion
+            success = False
+            if self.is_remote:
                 if is_dir:
-                    # For local directories, use shutil.rmtree for recursive deletion
-                    # or os.rmdir for empty directories.
-                    # shutil.rmtree is safer for user experience but permanent.
+                    success = self.client.rmdir(path)
+                else:
+                    success = self.client.remove(path)
+            else:
+                if is_dir:
                     if os.path.exists(path):
-                        shutil.rmtree(path) 
+                        # Check parent directory permissions too
+                        parent_dir = os.path.dirname(path)
+                        if not os.access(parent_dir, os.W_OK):
+                            CustomMessageBox.warning(self, "Permission Denied", 
+                                "Cannot delete: Insufficient permissions on parent directory.")
+                            return
+                        shutil.rmtree(path)
                         success = True
-                    else:
-                        CustomMessageBox.warning(self, "Delete Error", f"Local directory not found: {path}")
-                        return
                 else:
                     if os.path.exists(path):
+                        # Check parent directory permissions
+                        parent_dir = os.path.dirname(path)
+                        if not os.access(parent_dir, os.W_OK):
+                            CustomMessageBox.warning(self, "Permission Denied", 
+                                "Cannot delete: Insufficient permissions on parent directory.")
+                            return
                         os.remove(path)
                         success = True
-                    else:
-                        CustomMessageBox.warning(self, "Delete Error", f"Local file not found: {path}")
-                        return
 
             if success:
-                # Use thread-safe refresh scheduling to prevent Qt threading errors
                 self._schedule_safe_refresh()
             else:
-                # If success is False, an error message should have been logged/displayed by SFTPClient or local ops
-                CustomMessageBox.critical(self, "Delete Failed", f"Failed to delete '{os.path.basename(path)}'. Check logs for details.")
+                CustomMessageBox.critical(self, "Delete Failed", 
+                    f"Failed to delete '{os.path.basename(path)}'. Check logs for details.")
+        except PermissionError as pe:
+            CustomMessageBox.warning(self, "Permission Denied", 
+                f"Cannot delete '{os.path.basename(path)}': Permission denied.")
         except Exception as e:
-            CustomMessageBox.critical(self, "Delete Error", f"Failed to delete '{os.path.basename(path)}': {e}")
+            CustomMessageBox.critical(self, "Delete Error", 
+                f"Failed to delete '{os.path.basename(path)}': {e}")
 
     def rename_item(self, old_path, new_path):
         """Renames a file or directory with thread-safe UI updates."""
