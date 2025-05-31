@@ -1,5 +1,6 @@
 # FilePilot
 
+![FilePilot Screenshot](icon/filePilotIcon.png)
 A secure, cross-platform SFTP client with both GUI and command-line interfaces.
 
 ## Security Features

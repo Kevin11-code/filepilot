@@ -46,3 +46,4 @@ code/config/connections.json
 # Uncomment if needed
 # installEnv.ps1
 # installEnv.sh
+FilePilot.spec
