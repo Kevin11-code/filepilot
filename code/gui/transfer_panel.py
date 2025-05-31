@@ -508,124 +508,124 @@ class TransferPanel(QWidget):
         except Exception as e:
             logging.error(f"Error updating table: {str(e)}")
     
-    def update_activity_view(self):
-        """Show only new, user-friendly activity logs for the current session (no emojis, no timestamps, no repeats)."""
-        log_path = os.path.join(os.path.dirname(__file__), "..", "logs", "filepilot.log")
-        log_path = os.path.abspath(log_path)
-        # Track unique activities for this session
-        if not hasattr(self, "_shown_activities"):
-            self._shown_activities = set()
-            self._last_activity_type = None
+    # def update_activity_view(self):
+    #     """Show only new, user-friendly activity logs for the current session."""
+    #     log_path = os.path.join(os.path.dirname(__file__), "..", "logs", "filepilot.log")
+    #     log_path = os.path.abspath(log_path)
+    #     # Track unique activities for this session
+    #     if not hasattr(self, "_shown_activities"):
+    #         self._shown_activities = set()
+    #         self._last_activity_type = None
 
-        try:
-            with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
-                f.seek(self._activity_log_last_pos)
-                new_lines = f.readlines()
-                activity_lines = []
-                for line in new_lines:
-                    # Remove timestamp and dash
-                    if " - " in line:
-                        _, msg = line.split(" - ", 1)
-                    else:
-                        msg = line
-                    msg = msg.strip()
+    #     try:
+    #         with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
+    #             f.seek(self._activity_log_last_pos)
+    #             new_lines = f.readlines()
+    #             activity_lines = []
+    #             for line in new_lines:
+    #                 # # Remove timestamp and dash
+    #                 # if " - " in line:
+    #                 #     _, msg = line.split(" - ", 1)
+    #                 # else:
+    #                 #     msg = line
+    #                 # msg = msg.strip()
 
-                    activity = None
-                    activity_type = None
+    #                 activity = None
+    #                 activity_type = None
 
-                    if "Connecting to" in msg:
-                        server = msg.split("Connecting to ")[1]
-                        activity = f"Connection Established: {server}"
-                        activity_type = "connect"
-                    elif "Connected successfully to" in msg:
-                        server = msg.split("Connected successfully to ")[1]
-                        activity = f"Connected: {server}"
-                        activity_type = "connect"
-                    elif "Authentication (password) successful" in msg:
-                        activity = "Authentication Successful"
-                        activity_type = "auth"
-                    elif "Started transfer" in msg:
-                        details = msg.split("Started transfer", 1)[-1].lstrip(": ")
-                        if "->" in details:
-                            src, dst = [s.strip() for s in details.split("->")]
-                            direction = "Local to Server" if (":" in src and "/" in dst) else "Server to Server"
-                            activity = f"Transfer Started ({direction}): {os.path.basename(src)} → {dst}"
-                        else:
-                            activity = f"Transfer Started: {details}"
-                        activity_type = "transfer_start"
-                    elif "File upload completed successfully" in msg or "File download completed successfully" in msg:
-                        details = msg.split(": ", 1)[-1]
-                        if "upload" in msg:
-                            direction = "Local to Server"
-                        else:
-                            direction = "Server to Local"
-                        if "->" in details:
-                            src, dst = [s.strip() for s in details.split("->")]
-                            activity = f"File Transfer Success ({direction}): {os.path.basename(src)} → {dst}"
-                        else:
-                            activity = f"File Transfer Success: {details}"
-                        activity_type = "transfer_success"
-                    elif "Transfer completed with status COMPLETED" in msg:
-                        details = msg.split("COMPLETED: ")[-1]
-                        if "->" in details:
-                            src, dst = [s.strip() for s in details.split("->")]
-                            activity = f"Transfer Completed: {os.path.basename(src)} → {dst}"
-                        else:
-                            activity = f"Transfer Completed: {details}"
-                        activity_type = "transfer_success"
-                    elif "FAILED" in msg or "Error" in msg:
-                        activity = f"Transfer Failed/Error: {msg}"
-                        activity_type = "transfer_fail"
-                    elif "Successfully deleted remote file" in msg:
-                        file_path = msg.split("Successfully deleted remote file: ")[1]
-                        activity = f"File Deleted: {file_path}"
-                        activity_type = "delete"
-                    elif "Transfer paused" in msg:
-                        activity = "Transfer Paused"
-                        activity_type = "pause"
-                    elif "Transfer resumed" in msg:
-                        activity = "Transfer Resumed"
-                        activity_type = "resume"
-                    elif "Transfer canceled" in msg:
-                        activity = "Transfer Cancelled"
-                        activity_type = "cancel"
-                    elif "Disconnected from server" in msg:
-                        # Only show "Disconnected" if last activity was not a transfer success
-                        if self._last_activity_type not in ("transfer_success",):
-                            activity = "Disconnected"
-                            activity_type = "disconnect"
-                    elif "Detected OS from" in msg:
-                        activity = "Remote Environment Detected"
-                        activity_type = "env"
-                    elif "Integrity check passed" in msg:
-                        activity = "Integrity Check Passed"
-                        activity_type = "integrity"
-                    elif "Home directory determined as" in msg:
-                        activity = f"Home Directory: {msg.split('as: ')[1]}"
-                        activity_type = "home"
-                    elif "Successfully renamed" in msg:
-                        parts = msg.split("Successfully renamed ")
-                        if len(parts) > 1:
-                            files = parts[1].split(" to ")
-                            if len(files) == 2:
-                                activity = f"File Renamed: {files[0]} → {files[1]}"
-                            else:
-                                activity = f"File Renamed: {parts[1]}"
-                        activity_type = "rename"
+    #                 if "Connecting to" in msg:
+    #                     server = msg.split("Connecting to ")[1]
+    #                     activity = f"Connection Established: {server}"
+    #                     activity_type = "connect"
+    #                 elif "Connected successfully to" in msg:
+    #                     server = msg.split("Connected successfully to ")[1]
+    #                     activity = f"Connected: {server}"
+    #                     activity_type = "connect"
+    #                 elif "Authentication (password) successful" in msg:
+    #                     activity = "Authentication Successful"
+    #                     activity_type = "auth"
+    #                 elif "Started transfer" in msg:
+    #                     details = msg.split("Started transfer", 1)[-1].lstrip(": ")
+    #                     if "->" in details:
+    #                         src, dst = [s.strip() for s in details.split("->")]
+    #                         direction = "Local to Server" if (":" in src and "/" in dst) else "Server to Server"
+    #                         activity = f"Transfer Started ({direction}): {os.path.basename(src)} → {dst}"
+    #                     else:
+    #                         activity = f"Transfer Started: {details}"
+    #                     activity_type = "transfer_start"
+    #                 elif "File upload completed successfully" in msg or "File download completed successfully" in msg:
+    #                     details = msg.split(": ", 1)[-1]
+    #                     if "upload" in msg:
+    #                         direction = "Local to Server"
+    #                     else:
+    #                         direction = "Server to Local"
+    #                     if "->" in details:
+    #                         src, dst = [s.strip() for s in details.split("->")]
+    #                         activity = f"File Transfer Success ({direction}): {os.path.basename(src)} → {dst}"
+    #                     else:
+    #                         activity = f"File Transfer Success: {details}"
+    #                     activity_type = "transfer_success"
+    #                 elif "Transfer completed with status COMPLETED" in msg:
+    #                     details = msg.split("COMPLETED: ")[-1]
+    #                     if "->" in details:
+    #                         src, dst = [s.strip() for s in details.split("->")]
+    #                         activity = f"Transfer Completed: {os.path.basename(src)} → {dst}"
+    #                     else:
+    #                         activity = f"Transfer Completed: {details}"
+    #                     activity_type = "transfer_success"
+    #                 elif "FAILED" in msg or "Error" in msg:
+    #                     activity = f"Transfer Failed/Error: {msg}"
+    #                     activity_type = "transfer_fail"
+    #                 elif "Successfully deleted remote file" in msg:
+    #                     file_path = msg.split("Successfully deleted remote file: ")[1]
+    #                     activity = f"File Deleted: {file_path}"
+    #                     activity_type = "delete"
+    #                 elif "Transfer paused" in msg:
+    #                     activity = "Transfer Paused"
+    #                     activity_type = "pause"
+    #                 elif "Transfer resumed" in msg:
+    #                     activity = "Transfer Resumed"
+    #                     activity_type = "resume"
+    #                 elif "Transfer canceled" in msg:
+    #                     activity = "Transfer Cancelled"
+    #                     activity_type = "cancel"
+    #                 elif "Disconnected from server" in msg:
+    #                     # Only show "Disconnected" if last activity was not a transfer success
+    #                     if self._last_activity_type not in ("transfer_success",):
+    #                         activity = "Disconnected"
+    #                         activity_type = "disconnect"
+    #                 elif "Detected OS from" in msg:
+    #                     activity = "Remote Environment Detected"
+    #                     activity_type = "env"
+    #                 elif "Integrity check passed" in msg:
+    #                     activity = "Integrity Check Passed"
+    #                     activity_type = "integrity"
+    #                 elif "Home directory determined as" in msg:
+    #                     activity = f"Home Directory: {msg.split('as: ')[1]}"
+    #                     activity_type = "home"
+    #                 elif "Successfully renamed" in msg:
+    #                     parts = msg.split("Successfully renamed ")
+    #                     if len(parts) > 1:
+    #                         files = parts[1].split(" to ")
+    #                         if len(files) == 2:
+    #                             activity = f"File Renamed: {files[0]} → {files[1]}"
+    #                         else:
+    #                             activity = f"File Renamed: {parts[1]}"
+    #                     activity_type = "rename"
 
-                    # Only show unique activities (avoid repeats)
-                    if activity and activity not in self._shown_activities:
-                        activity_lines.append(activity)
-                        self._shown_activities.add(activity)
-                        self._last_activity_type = activity_type
+    #                 # Only show unique activities (avoid repeats)
+    #                 if activity and activity not in self._shown_activities:
+    #                     activity_lines.append(activity)
+    #                     self._shown_activities.add(activity)
+    #                     self._last_activity_type = activity_type
 
-                if activity_lines:
-                    self.activity_view.moveCursor(self.activity_view.textCursor().End)
-                    self.activity_view.insertPlainText('\n'.join(activity_lines) + '\n')
-                    self.activity_view.moveCursor(self.activity_view.textCursor().End)
-                self._activity_log_last_pos = f.tell()
-        except Exception as e:
-            self.activity_view.setPlainText(f"Could not read log file:\n{e}")
+    #             if activity_lines:
+    #                 self.activity_view.moveCursor(self.activity_view.textCursor().End)
+    #                 self.activity_view.insertPlainText('\n'.join(activity_lines) + '\n')
+    #                 self.activity_view.moveCursor(self.activity_view.textCursor().End)
+    #             self._activity_log_last_pos = f.tell()
+    #     except Exception as e:
+    #         self.activity_view.setPlainText(f"Could not read log file:\n{e}")
     
     def format_size(self, num_bytes):
         """Convert bytes to a human-readable string."""

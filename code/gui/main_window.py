@@ -1174,7 +1174,7 @@ class MainWindow(QMainWindow):
             self.logger.error(f"Error refreshing server-to-server panels: {str(e)}")
     
     def update_activity_view(self):
-        """Update the activity log view with new log entries"""
+        """Update the activity log view with new log entries without timestamps and duplicates"""
         log_path = os.path.join(os.path.dirname(__file__), "..", "logs", "filepilot.log")
         log_path = os.path.abspath(log_path)
         
@@ -1187,22 +1187,52 @@ class MainWindow(QMainWindow):
                     # Decode and split by lines
                     new_lines = new_data.decode('utf-8', errors='replace').splitlines()
                     
-                    # Filter out empty lines
-                    new_lines = [line for line in new_lines if line.strip()]
-                    
-                    # Add each new line to the activity view
+                    # Filter out empty lines and process each line
                     for line in new_lines:
-                        self.activity_view.appendPlainText(line)
+                        if not line.strip():
+                            continue
                         
-                        # Auto-scroll to bottom
-                        scrollbar = self.activity_view.verticalScrollBar()
-                        scrollbar.setValue(scrollbar.maximum())
-                
-                self._activity_log_last_pos = f.tell()
-                
+                        # Skip progress-related messages
+                        if any(skip_text in line for skip_text in [
+                            "bytes transferred", 
+                            "Progress:", 
+                            "Transfer progress",
+                            "Current speed:",
+                            "Time remaining:"
+                        ]):
+                            continue
+                                
+                        # Remove timestamp prefix if present
+                        if " - " in line:
+                            parts = line.split(" - ", 1)
+                            if len(parts) > 1:
+                                if "filepilot - INFO - " in parts[1]:
+                                    msg = parts[1].split("filepilot - INFO - ")[1]
+                                else:
+                                    msg = parts[1]
+                            else:
+                                msg = line
+                        else:
+                            msg = line
+
+                        # Skip if message is just a timestamp or already shown
+                        msg = msg.strip()
+                        if (msg and 
+                            not msg.startswith("202") and  # Skip timestamp lines
+                            msg not in self._shown_activities):  # Skip duplicates
+                            
+                            self.activity_view.appendPlainText(msg)
+                            self._shown_activities.add(msg)
+                                
+                            # Auto-scroll to bottom
+                            scrollbar = self.activity_view.verticalScrollBar()
+                            scrollbar.setValue(scrollbar.maximum())
+            
+            self._activity_log_last_pos = f.tell()
+            
         except Exception as e:
             if not hasattr(self, '_error_shown'):
-                self.activity_view.setPlainText(f"Activity log unavailable: {str(e)}")
+                self.activity_view.setPlainText(f"FilePilot Transfer Manager Started\n")
                 self._error_shown = True
 
         important_events = []  # Collect important events to display
