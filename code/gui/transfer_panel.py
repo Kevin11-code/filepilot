@@ -300,7 +300,8 @@ class TransferPanel(QWidget):
                 background-color: #ffffff;
                 border: none;
                 gridline-color: #f5f5f5;
-                selection-background-color: #f8f8f8;
+                selection-background-color: #0078d4;
+                selection-color: #ffffff;
                 font-size: 12px;
             }
             QTableWidget::item {
@@ -309,8 +310,20 @@ class TransferPanel(QWidget):
                 border-right: none;
             }
             QTableWidget::item:selected {
-                background-color: #f8f8f8;
-                color: #1a1a1a;
+                background-color: #0078d4;
+                color: #ffffff;
+            }
+            QTableWidget::item:selected:active {
+                background-color: #0078d4;
+                color: #ffffff;
+            }
+            QTableWidget::item:selected:!active {
+                background-color: #0078d4;
+                color: #ffffff;
+            }
+            QTableWidget::item:selected:focus {
+                background-color: #0078d4;
+                color: #ffffff;
             }
             QHeaderView::section {
                 background-color: #ffffff;
@@ -324,7 +337,11 @@ class TransferPanel(QWidget):
                 letter-spacing: 1px;
             }
             QTableWidget::item:hover {
-                background-color: #fafafa;
+                background-color: #e6f3ff;
+            }
+            QTableWidget::item:hover:selected {
+                background-color: #0078d4;
+                color: #ffffff;
             }
         """)
         
@@ -405,109 +422,91 @@ class TransferPanel(QWidget):
     
     def update_table(self, table, transfers):
         """Update a table with transfer data using minimalist black/white design"""
-        # Ensure this method only runs on the main thread
-        if not QApplication.instance() or QThread.currentThread() != QApplication.instance().thread():
-            # If called from a worker thread, schedule on main thread
-            QTimer.singleShot(0, lambda: self.update_table(table, transfers))
+        # Ensure we're on the main thread
+        if not QApplication.instance() or QApplication.instance().closingDown():
             return
             
-        table.setRowCount(len(transfers))
-        
-        for row, transfer in enumerate(transfers):
-            # Clean ID without emojis
-            id_item = QTableWidgetItem(str(transfer['id']))
-            table.setItem(row, 0, id_item)
+        # Check if we're on the main thread, if not, schedule on main thread
+        from PyQt5.QtCore import QThread, QTimer
+        if QThread.currentThread() != QApplication.instance().thread():
+            # Schedule on main thread using QTimer
+            QTimer.singleShot(0, lambda: self._update_table_on_main_thread(table, transfers))
+            return
             
-            # Type with subtle styling
-            type_item = QTableWidgetItem(transfer['type'].upper())
-            table.setItem(row, 1, type_item)
+        self._update_table_on_main_thread(table, transfers)
+    
+    def _update_table_on_main_thread(self, table, transfers):
+        """Perform the actual table update on the main thread"""
+        try:
+            # Store current selection
+            current_row = table.currentRow()
             
-            # Source and Destination with truncated paths
-            source_text = self._truncate_path(transfer['source'])
-            dest_text = self._truncate_path(transfer['destination'])
-            source_item = QTableWidgetItem(source_text)
-            source_item.setTextAlignment(Qt.AlignCenter)
-            dest_item = QTableWidgetItem(dest_text)
-            dest_item.setTextAlignment(Qt.AlignCenter)
-            table.setItem(row, 2, source_item)
-            table.setItem(row, 3, dest_item)
+            # Clear table but preserve structure
+            table.setRowCount(0)
+            table.setRowCount(len(transfers))
             
-            # Status with minimalist indicators
-            status_text = transfer['status']
-            status_item = QTableWidgetItem(status_text)
+            # Pre-define styles as strings to avoid creating Qt objects repeatedly
+            normal_style = "background-color: #ffffff; color: #000000; border: none;"
+            completed_style = "background-color: #e8f5e8; color: #2d5a2d; border: none;"
+            failed_style = "background-color: #ffe8e8; color: #8b0000; border: none;"
+            progress_style = "background-color: #e8f0ff; color: #1e3a5f; border: none;"
             
-            # Subtle visual cues using typography weight instead of colors
-            if 'COMPLETED' in status_text:
-                status_item.setText(f"✓ {status_text}")
-                status_item.setForeground(QColor(0, 128, 0))  # Green tex
-                font = status_item.font()
-                font.setBold(True)
-                status_item.setFont(font)
-            elif 'FAILED' in status_text:
-                status_item.setText(f"✗ {status_text}")
-                status_item.setForeground(QColor(252, 3, 40))  # Red tex
-                font = status_item.font()
-                font.setBold(True)
-                status_item.setFont(font)
-            elif 'PAUSED' in status_text:
-                status_item.setText(f"|| {status_text}")
-            elif 'IN_PROGRESS' in status_text or 'ACTIVE' in status_text or 'TRANSFERRING' in status_text:
-                status_item.setText(f"→ {status_text}")
-                status_item.setForeground(QColor(0, 128, 0))  # Green tex
-            elif 'QUEUED' in status_text:
-                status_item.setText(f"⏳ {status_text}")
-            elif 'CANCELED' in status_text:
-                status_item.setText(f"✗ {status_text}")
-                status_item.setForeground(QColor(252, 3, 40))  # Red tex
-            else:
-                status_item.setText(f"· {status_text}")
-            
-            table.setItem(row, 4, status_item)
-            
-            # Use text-based progress instead of QProgressBar to avoid widget threading issues
-            progress_text = transfer['progress']
-            try:
-                if '%' in progress_text:
-                    progress_value = float(progress_text.replace('%', '').strip())
-                    progress_display = f"{progress_value:.1f}%"
+            for row, transfer in enumerate(transfers):
+                # Create items with text only, no styling initially
+                items = [
+                    QTableWidgetItem(str(transfer.get('id', ''))),
+                    QTableWidgetItem(transfer.get('type', '')),
+                    QTableWidgetItem(transfer.get('source', '')),
+                    QTableWidgetItem(transfer.get('destination', '')),
+                    QTableWidgetItem(transfer.get('status', '')),
+                    QTableWidgetItem(transfer.get('progress', '')),
+                    QTableWidgetItem(transfer.get('transferred', '')),
+                    QTableWidgetItem(transfer.get('total', '')),
+                    QTableWidgetItem(transfer.get('rate', '')),
+                    QTableWidgetItem(transfer.get('elapsed_time', '')),
+                    QTableWidgetItem(transfer.get('error', ''))
+                ]
+                
+                # Set items first
+                for col, item in enumerate(items):
+                    table.setItem(row, col, item)
+                
+                # Apply styling based on status
+                status = transfer.get('status', '')
+                if status == 'COMPLETED':
+                    style = completed_style
+                elif status == 'FAILED':
+                    style = failed_style
+                elif status == 'IN_PROGRESS':
+                    style = progress_style
                 else:
-                    try:
-                        progress_value = float(progress_text)
-                        progress_display = f"{progress_value:.1f}%"
-                    except (ValueError, TypeError):
-                        progress_display = str(progress_text)
-            except (ValueError, TypeError, AttributeError):
-                progress_display = "—"
-            
-            progress_item = QTableWidgetItem(progress_display)
-            progress_item.setTextAlignment(Qt.AlignCenter)
-            table.setItem(row, 5, progress_item)
-            
-            # Speed and Size with clean formatting
-            speed_item = QTableWidgetItem(transfer['rate'])
-            table.setItem(row, 6, speed_item)
-            
-            size_text = f"{transfer['transferred']} / {transfer['total']}"
-            size_item = QTableWidgetItem(size_text)
-            table.setItem(row, 7, size_item)
-            
-            # Log completed transfers
-            transfer_id = transfer['id']
-            current_status = transfer['status']
-            last_status = self.last_logged_status.get(transfer_id)
-
-            if current_status != last_status:
-                if current_status == 'COMPLETED':
-                    transferred_str = self.safe_format_size(transfer['transferred'])
-                    total_str = self.safe_format_size(transfer['total'])
-                    log_msg = (
-                        f"ID: {transfer['id']} | Type: {transfer['type']} | "
-                        f"Source: {transfer['source']} | Destination: {transfer['destination']} | "
-                        f"Status: {transfer['status']} | Progress: {transfer['progress']} | "
-                        f"Speed: {transfer['rate']} | Size: {transferred_str} / {total_str}"
-                    )
-                    logging.info(log_msg)
-                self.last_logged_status[transfer_id] = current_status
+                    style = normal_style
+                
+                # Apply style to all items in the row
+                for col in range(len(items)):
+                    if table.item(row, col):
+                        table.item(row, col).setData(Qt.UserRole, style)
+                        
+            # Restore selection safely
+            if 0 <= current_row < table.rowCount():
+                table.selectRow(current_row)
+                
+            # Apply stored styles
+            for row in range(table.rowCount()):
+                for col in range(table.columnCount()):
+                    item = table.item(row, col)
+                    if item:
+                        style = item.data(Qt.UserRole)
+                        if style:
+                            item.setData(Qt.UserRole, None)  # Clear stored style
+                            # Apply style safely
+                            try:
+                                table.item(row, col).setBackground(QColor("#ffffff" if "ffffff" in style else "#e8f5e8" if "e8f5e8" in style else "#ffe8e8" if "ffe8e8" in style else "#e8f0ff"))
+                            except:
+                                pass  # Ignore styling errors
+                
+        except Exception as e:
+            logging.error(f"Error updating table: {str(e)}")
     
     def update_activity_view(self):
         """Show only new, user-friendly activity logs for the current session (no emojis, no timestamps, no repeats)."""

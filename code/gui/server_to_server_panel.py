@@ -133,36 +133,38 @@ class ServerToServerPanel(DualPanelWidget):
     def setup_panels(self):
         """Set up the server-to-server specific panels."""
         # Source Server Panel
-        source_label = QLabel("SOURCE SERVER")
-        source_label.setAlignment(Qt.AlignCenter)
+        source_label = QLabel("Source Server")
         source_label.setStyleSheet("""
-            font-weight: bold;
-            font-size: 11pt;
-            color: #1a1a1a;
-            padding: 5px;
-            background-color: #f8f8f8;
-            border-bottom: 1px solid #e5e5e5;
+            color: #666666;
+            font-size: 11px;
+            font-weight: 400;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            padding: 4px 0px;
+            margin: 0px;
         """)
+        source_label.setAlignment(Qt.AlignCenter)
         self.left_layout.addWidget(source_label)
 
-        self.source_panel = FilePanel(is_remote=True)
+        self.source_panel = FilePanel(parent=self.parent(), is_remote=True)
         self.source_panel.itemSelected.connect(self.source_item_selected)
         self.left_layout.addWidget(self.source_panel)
 
         # Destination Server Panel
-        dest_label = QLabel("DESTINATION SERVER")
-        dest_label.setAlignment(Qt.AlignCenter)
+        dest_label = QLabel("Destination Server")
         dest_label.setStyleSheet("""
-            font-weight: bold;
-            font-size: 11pt;
-            color: #1a1a1a;
-            padding: 5px;
-            background-color: #f8f8f8;
-            border-bottom: 1px solid #e5e5e5;
+            color: #666666;
+            font-size: 11px;
+            font-weight: 400;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            padding: 4px 0px;
+            margin: 0px;
         """)
+        dest_label.setAlignment(Qt.AlignCenter)
         self.right_layout.addWidget(dest_label)
 
-        self.destination_panel = FilePanel(is_remote=True)
+        self.destination_panel = FilePanel(parent=self.parent(), is_remote=True)
         self.destination_panel.itemSelected.connect(self.dest_item_selected)
         self.right_layout.addWidget(self.destination_panel)
 
@@ -232,7 +234,7 @@ class ServerToServerPanel(DualPanelWidget):
 
         if dest_exists:
             reply = CustomMessageBox.question(
-                self, "File Exists",
+                self, "Overwrite File?",
                 f"The file '{os.path.basename(dest_full_path)}' already exists on the destination server.\n\n"
                 f"Destination path: {dest_full_path}\n\n"
                 "Do you want to overwrite it?",
@@ -241,6 +243,9 @@ class ServerToServerPanel(DualPanelWidget):
                 return
         # Create overwrite callback for server-to-server transfer
         def s2s_overwrite_callback(file_path):
+            # Use thread-safe overwrite handler if available
+            if hasattr(self.parent(), 'overwrite_handler'):
+                return self.parent().overwrite_handler.request_overwrite_confirmation(file_path, "server_to_server")
             return True
 
         # Get connection configs for transfer manager
@@ -264,10 +269,10 @@ class ServerToServerPanel(DualPanelWidget):
                 dest_full_path,
                 source_config,
                 dest_config,
-                # Pass lambda with TransferType.SERVER_TO_SERVER and the destination panel reference
+                # Pass panel identifier instead of object reference to avoid Qt threading violations
                 progress_callback=lambda tid, tr, tt: self.signal_bridge.update_progress(
-                    tid, tr, tt, TransferType.SERVER_TO_SERVER, self.destination_panel),
-                overwrite_callback=lambda _: True
+                    tid, tr, tt, TransferType.SERVER_TO_SERVER, "destination_panel"),
+                overwrite_callback=s2s_overwrite_callback
             )
 
             if transfer_id:
@@ -324,7 +329,7 @@ class ServerToServerPanel(DualPanelWidget):
 
         if dest_exists:
             reply = CustomMessageBox.question(
-                self, "File Exists",
+                self, "Overwrite File?",
                 f"The file '{os.path.basename(dest_full_path)}' already exists on the source server.\n\n"
                 f"Destination path: {dest_full_path}\n\n"
                 "Do you want to overwrite it?",
@@ -334,6 +339,9 @@ class ServerToServerPanel(DualPanelWidget):
 
         # Create overwrite callback for server-to-server transfer
         def s2s_overwrite_callback(file_path):
+            # Use thread-safe overwrite handler if available
+            if hasattr(self.parent(), 'overwrite_handler'):
+                return self.parent().overwrite_handler.request_overwrite_confirmation(file_path, "server_to_server")
             return True
 
         # Get connection configs for transfer manager (swapped for dest->source transfer)
@@ -356,8 +364,8 @@ class ServerToServerPanel(DualPanelWidget):
                 dest_config,
                 # Pass lambda with TransferType.SERVER_TO_SERVER and the source panel reference (destination for this transfer)
                 progress_callback=lambda tid, tr, tt: self.signal_bridge.update_progress(
-                    tid, tr, tt, TransferType.SERVER_TO_SERVER, self.source_panel),
-                overwrite_callback=lambda _: True
+                    tid, tr, tt, TransferType.SERVER_TO_SERVER, "source_panel"),
+                overwrite_callback=s2s_overwrite_callback
             )
 
             if transfer_id:
@@ -410,29 +418,31 @@ class LocalToServerPanel(DualPanelWidget):
     def setup_panels(self):
         """Set up the local-to-server specific panels."""
         # Left side - Local Panel with heading
-        local_label = QLabel("LOCAL FILES")
-        local_label.setAlignment(Qt.AlignCenter)
+        local_label = QLabel("Local Files")
         local_label.setStyleSheet("""
-            font-weight: bold;
-            font-size: 11pt;
-            color: #1a1a1a;
-            padding: 5px;
-            background-color: #f8f8f8;
-            border-bottom: 1px solid #e5e5e5;
+            color: #666666;
+            font-size: 11px;
+            font-weight: 400;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            padding: 4px 0px;
+            margin: 0px;
         """)
+        local_label.setAlignment(Qt.AlignCenter)
         self.left_layout.addWidget(local_label)
         self.left_layout.addWidget(self.local_panel)
 
         # Right side - Remote Panel  
-        remote_label = QLabel("REMOTE SERVER")
-        remote_label.setAlignment(Qt.AlignCenter)
+        remote_label = QLabel("Remote Server")
         remote_label.setStyleSheet("""
-            font-weight: bold;
-            font-size: 11pt;
-            color: #1a1a1a;
-            padding: 5px;
-            background-color: #f8f8f8;
-            border-bottom: 1px solid #e5e5e5;
+            color: #666666;
+            font-size: 11px;
+            font-weight: 400;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            padding: 4px 0px;
+            margin: 0px;
         """)
+        remote_label.setAlignment(Qt.AlignCenter)
         self.right_layout.addWidget(remote_label)
         self.right_layout.addWidget(self.remote_panel)

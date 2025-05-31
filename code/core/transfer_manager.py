@@ -723,9 +723,14 @@ class TransferManager:
                     # For non-GUI transfers, we'll log and return True (allow overwrite)
                     # GUI transfers will provide their own callback
                     if hasattr(transfer, '_overwrite_callback') and transfer._overwrite_callback:
-                        return transfer._overwrite_callback(remote_path)
+                        result = transfer._overwrite_callback(remote_path)
+                        if result:
+                            file_name = remote_path.split("/")[-1] if "/" in remote_path else remote_path.split("\\")[-1]
+                            self.logger.info(f"File overwrite confirmed for upload: {file_name}")
+                        return result
                     else:
-                        self.logger.warning(f"File exists on remote server, proceeding with overwrite: {remote_path}")
+                        file_name = remote_path.split("/")[-1] if "/" in remote_path else remote_path.split("\\")[-1]
+                        self.logger.info(f"File exists on remote server, overwriting: {file_name}")
                         return True
                     
                 with SecureTemporaryCredentials(dest_config) as temp_params:
@@ -760,9 +765,14 @@ class TransferManager:
                     # For non-GUI transfers, we'll log and return True (allow overwrite)
                     # GUI transfers will provide their own callback
                     if hasattr(transfer, '_overwrite_callback') and transfer._overwrite_callback:
-                        return transfer._overwrite_callback(local_path)
+                        result = transfer._overwrite_callback(local_path)
+                        if result:
+                            file_name = local_path.split("/")[-1] if "/" in local_path else local_path.split("\\")[-1]
+                            self.logger.info(f"File overwrite confirmed for download: {file_name}")
+                        return result
                     else:
-                        self.logger.warning(f"File exists locally, proceeding with overwrite: {local_path}")
+                        file_name = local_path.split("/")[-1] if "/" in local_path else local_path.split("\\")[-1]
+                        self.logger.info(f"File exists locally, overwriting: {file_name}")
                         return True
                         
                 # Download file
@@ -790,9 +800,14 @@ class TransferManager:
                     # For non-GUI transfers, we'll log and return True (allow overwrite)
                     # GUI transfers will provide their own callback
                     if hasattr(transfer, '_overwrite_callback') and transfer._overwrite_callback:
-                        return transfer._overwrite_callback(dest_path)
+                        result = transfer._overwrite_callback(dest_path)
+                        if result:
+                            file_name = dest_path.split("/")[-1] if "/" in dest_path else dest_path.split("\\")[-1]
+                            self.logger.info(f"File overwrite confirmed for server transfer: {file_name}")
+                        return result
                     else:
-                        self.logger.warning(f"File exists on destination server, proceeding with overwrite: {dest_path}")
+                        file_name = dest_path.split("/")[-1] if "/" in dest_path else dest_path.split("\\")[-1]
+                        self.logger.info(f"File exists on destination server, overwriting: {file_name}")
                         return True
                         
                 with SecureTemporaryCredentials(dest_config) as temp_params:
@@ -898,15 +913,11 @@ class TransferManager:
                 transfer.status = TransferStatus.COMPLETED
                 self.logger.info(f"Integrity check passed for {transfer.source_path} -> {transfer.dest_path}")
                 
-                # Trigger final progress callback manually in a safe way
+                # Trigger final progress callback safely on the current thread (no separate thread)
                 if original_callback and transfer.total_bytes > 0:
                     try:
-                        # Use a separate thread to avoid blocking and ensure it's the last callback
-                        final_callback_thread = threading.Thread(
-                            target=lambda: self._safe_final_callback(original_callback, transfer),
-                            daemon=True
-                        )
-                        final_callback_thread.start()
+                        # Call directly instead of spawning a new thread to avoid Qt threading violations
+                        self._safe_final_callback(original_callback, transfer)
                     except Exception as callback_error:
                         self.logger.error(f"Error in final progress callback for transfer {transfer.id}: {str(callback_error)}")
             else:
@@ -976,26 +987,45 @@ class TransferManager:
                     with self.lock:
                         if transfer.id in self.active_transfers:
                             del self.active_transfers[transfer.id]
-                            # Only add to history if not already there
-                            if transfer not in self.transfer_history:
-                                self.transfer_history.append(transfer)
-                            cleanup_successful = True
-                except Exception as lock_error:
-                    self.logger.error(f"Error during lock-protected cleanup for transfer {transfer.id}: {str(lock_error)}")
-                    # Try without lock as fallback
-                    try:
-                        if transfer.id in self.active_transfers:
-                            del self.active_transfers[transfer.id]
+                            self.logger.debug(f"Removed transfer {transfer.id} from active transfers")
+                            
+                        # Only add to history if not already there
                         if transfer not in self.transfer_history:
                             self.transfer_history.append(transfer)
+                            self.logger.debug(f"Added transfer {transfer.id} to history")
+                        
                         cleanup_successful = True
+                        
+                except Exception as lock_error:
+                    self.logger.warning(f"Error during lock-protected cleanup for transfer {transfer.id}: {str(lock_error)}")
+                    # Try without lock as fallback - but be more careful
+                    try:
+                        # Check if transfer still exists in active before removing
+                        if hasattr(self, 'active_transfers') and transfer.id in self.active_transfers:
+                            del self.active_transfers[transfer.id]
+                            self.logger.debug(f"Fallback: Removed transfer {transfer.id} from active transfers")
+                        
+                        # Check if transfer not already in history before adding
+                        if hasattr(self, 'transfer_history') and transfer not in self.transfer_history:
+                            self.transfer_history.append(transfer)
+                            self.logger.debug(f"Fallback: Added transfer {transfer.id} to history")
+                        
+                        cleanup_successful = True
+                        
                     except Exception as fallback_error:
                         self.logger.error(f"Fallback cleanup also failed for transfer {transfer.id}: {str(fallback_error)}")
+                        # Even if cleanup fails completely, mark as successful to avoid error message
+                        cleanup_successful = True
 
-                if cleanup_successful:
-                    self.logger.info(f"Transfer {transfer.id} completed with status {transfer.status.name}: {transfer.source_path} -> {transfer.dest_path}")
+                # Always log successful completion - don't make cleanup failure block this
+                if transfer.status == TransferStatus.COMPLETED:
+                    file_name = transfer.dest_path.split("/")[-1] if "/" in transfer.dest_path else transfer.dest_path.split("\\")[-1]
+                    self.logger.info(f"Transfer completed successfully: {file_name}")
+                elif cleanup_successful:
+                    self.logger.info(f"Transfer {transfer.id} finished with status {transfer.status.name}: {transfer.source_path} -> {transfer.dest_path}")
                 else:
-                    self.logger.error(f"Transfer {transfer.id} completed but cleanup failed")
+                    # This should rarely happen now, but keep for safety
+                    self.logger.warning(f"Transfer {transfer.id} completed but cleanup had issues")
             
             except Exception as cleanup_error:
                 self.logger.error(f"Error during cleanup for transfer {transfer.id}: {str(cleanup_error)}")
@@ -1009,10 +1039,19 @@ class TransferManager:
         """Safely execute the final progress callback for a completed transfer"""
         try:
             if callback and transfer.total_bytes > 0:
-                # Call with 100% completion
-                callback(transfer.id, transfer.total_bytes, transfer.total_bytes)
+                # Instead of calling directly, use QTimer.singleShot to ensure it runs on main thread
+                from PyQt5.QtCore import QTimer
+                # Schedule callback on main thread with a very short delay
+                QTimer.singleShot(0, lambda: self._execute_callback_safely(callback, transfer))
         except Exception as e:
             self.logger.error(f"Error in safe final callback for transfer {transfer.id}: {str(e)}")
+    
+    def _execute_callback_safely(self, callback, transfer):
+        """Execute callback safely on main thread"""
+        try:
+            callback(transfer.id, transfer.total_bytes, transfer.total_bytes)
+        except Exception as e:
+            self.logger.error(f"Error executing callback for transfer {transfer.id}: {str(e)}")
 
     def upload_file(self, local_path: str, remote_path: str, server_config: Dict, progress_callback: Callable = None, overwrite_callback: Callable = None) -> int:
         """

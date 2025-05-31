@@ -32,6 +32,10 @@ class FilePanel(QWidget):
         self.current_path = "" # Initialize current_path attribute
         self.auth_manager = AuthManager() # Initialize AuthManager
         self.icon_provider = FileIconProvider() # Initialize icon provider
+        # Get reference to parent's overwrite handler for thread-safe dialogs
+        self.overwrite_handler = None
+        if hasattr(parent, 'overwrite_handler'):
+            self.overwrite_handler = parent.overwrite_handler
 
         self.setup_ui()
         self.load_directory(os.path.expanduser("~") if not is_remote else "/") # Initial directory
@@ -53,7 +57,8 @@ class FilePanel(QWidget):
                 background-color: #ffffff;
                 border: none;
                 gridline-color: #f5f5f5;
-                selection-background-color: #f8f8f8;
+                selection-background-color: #0078d4;
+                selection-color: #ffffff;
                 font-size: 12px;
             }
             QTreeView::item {
@@ -61,8 +66,20 @@ class FilePanel(QWidget):
                 border-bottom: 1px solid #f5f5f5;
             }
             QTreeView::item:selected {
-                background-color: #f8f8f8;
-                color: #1a1a1a;
+                background-color: #0078d4;
+                color: #ffffff;
+            }
+            QTreeView::item:selected:active {
+                background-color: #0078d4;
+                color: #ffffff;
+            }
+            QTreeView::item:selected:!active {
+                background-color: #0078d4;
+                color: #ffffff;
+            }
+            QTreeView::item:selected:focus {
+                background-color: #0078d4;
+                color: #ffffff;
             }
             QHeaderView::section {
                 background-color: #ffffff;
@@ -76,7 +93,11 @@ class FilePanel(QWidget):
                 letter-spacing: 1px;
             }
             QTreeView::item:hover {
-                background-color: #fafafa;
+                background-color: #e6f3ff;
+            }
+            QTreeView::item:hover:selected {
+                background-color: #0078d4;
+                color: #ffffff;
             }
             QPushButton {
                 background-color: transparent;
@@ -97,7 +118,7 @@ class FilePanel(QWidget):
                 border: 1px solid #e5e5e5;
                 padding: 5px;
                 background-color: #ffffff;
-                selection-background-color: #1a1a1a;
+                selection-background-color: #0078d4;
                 selection-color: #ffffff;
             }
             QComboBox {
@@ -118,8 +139,8 @@ class FilePanel(QWidget):
             QComboBox QAbstractItemView {
                 background-color: #ffffff;
                 border: 1px solid #e5e5e5;
-                selection-background-color: #f8f8f8;
-                selection-color: #1a1a1a;
+                selection-background-color: #0078d4;
+                selection-color: #ffffff;
             }
             QMenu {
                 background-color: #ffffff;

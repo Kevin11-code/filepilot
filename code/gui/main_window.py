@@ -26,25 +26,130 @@ from code.gui.custom_message_box import CustomMessageBox, SFTPMessages
 from code.gui.server_to_server_panel import ServerToServerPanel, LocalToServerPanel
 
 
+class ThreadSafeOverwriteHandler(QObject):
+    """
+    Thread-safe handler for overwrite dialogs to prevent Qt threading violations.
+    All dialog operations are queued and executed on the main thread.
+    """
+    overwriteRequested = pyqtSignal(str, str, int)  # file_path, dialog_type, request_id
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.parent = parent
+        self.pending_requests = {}
+        self.request_counter = 0
+        self.dialog_lock = threading.Lock()
+        self.overwriteRequested.connect(self._handle_overwrite_dialog)
+
+    def request_overwrite_confirmation(self, file_path, dialog_type="upload"):
+        """
+        Thread-safe method to request overwrite confirmation.
+        Returns True/False for overwrite decision.
+        """
+        # Generate unique request ID
+        with self.dialog_lock:
+            request_id = self.request_counter
+            self.request_counter += 1
+
+            # Create event to wait for response
+            response_event = threading.Event()
+            self.pending_requests[request_id] = {
+                'event': response_event,
+                'result': False
+            }
+
+        # Emit signal to main thread (will be processed asynchronously)
+        self.overwriteRequested.emit(file_path, dialog_type, request_id)
+
+        # Wait for response with timeout to prevent deadlocks
+        if response_event.wait(timeout=30):  # 30 second timeout
+            with self.dialog_lock:
+                result = self.pending_requests[request_id]['result']
+                del self.pending_requests[request_id]
+            return result
+        else:
+            # Timeout - cleanup and return False
+            with self.dialog_lock:
+                if request_id in self.pending_requests:
+                    del self.pending_requests[request_id]
+            return False
+
+    def _handle_overwrite_dialog(self, file_path, dialog_type, request_id):
+        """Handle overwrite dialog on main thread"""
+        try:
+            # Ensure we're on main thread
+            if QThread.currentThread() != QApplication.instance().thread():
+                QTimer.singleShot(0, lambda: self._handle_overwrite_dialog(file_path, dialog_type, request_id))
+                return
+
+            # Check if application is closing
+            if not QApplication.instance() or QApplication.instance().closingDown():
+                self._complete_request(request_id, False)
+                return
+
+            # Show dialog based on type
+            file_name = os.path.basename(file_path)
+
+            if dialog_type == "upload":
+                title = "Overwrite Remote File?"
+                message = (f"The file '{file_name}' already exists on the remote server.\n\n"
+                          f"Remote path: {file_path}\n\n"
+                          "Do you want to overwrite it?")
+            elif dialog_type == "download":
+                title = "Overwrite Local File?"
+                message = (f"The file '{file_name}' already exists locally.\n\n"
+                          f"Local path: {file_path}\n\n"
+                          "Do you want to overwrite it?")
+            else:  # server_to_server
+                title = "Overwrite File?"
+                message = (f"The file '{file_name}' already exists at the destination.\n\n"
+                          f"Destination path: {file_path}\n\n"
+                          "Do you want to overwrite it?")
+
+            # Show dialog with proper parent and flags
+            reply = CustomMessageBox.question(
+                self.parent, title, message,
+                CustomMessageBox.Yes | CustomMessageBox.No, 
+                CustomMessageBox.No
+            )
+
+            result = (reply == CustomMessageBox.Yes)
+            self._complete_request(request_id, result)
+
+        except Exception as e:
+            # Log error and return False
+            if hasattr(self.parent, 'logger'):
+                self.parent.logger.error(f"Error in overwrite dialog: {str(e)}")
+            self._complete_request(request_id, False)
+
+    def _complete_request(self, request_id, result):
+        """Complete the overwrite request with the given result"""
+        with self.dialog_lock:
+            if request_id in self.pending_requests:
+                self.pending_requests[request_id]['result'] = result
+                self.pending_requests[request_id]['event'].set()
+
+
 class TransferSignalBridge(QObject):
     """
     Bridge class to safely emit signals from transfer worker threads to the UI thread.
     Solves the QObject timer thread issues by ensuring all Qt operations happen on the main thread.
     """
     # Define a signal that will be emitted when transfer progress updates
-    # Added 'transfer_type' and 'destination_panel_ref' for S2S transfers
-    progressUpdated = pyqtSignal(int, int, int, TransferType, object) #
+    # Use string identifier instead of object reference to avoid Qt threading violations
+    progressUpdated = pyqtSignal(int, int, int, TransferType, str)
     
     def __init__(self):
         super().__init__()
         
     def update_progress(self, transfer_id: int, bytes_transferred: int, total_bytes: int,
-                        transfer_type: TransferType = TransferType.DOWNLOAD, destination_panel_ref=None): #
+                        transfer_type: TransferType = TransferType.DOWNLOAD, destination_panel_id: str = None):
         """
         This method is called from worker threads, but safely emits a signal
         that will be processed on the main Qt thread.
+        Uses string identifiers instead of object references to avoid threading violations.
         """
-        self.progressUpdated.emit(transfer_id, bytes_transferred, total_bytes, transfer_type, destination_panel_ref) #
+        self.progressUpdated.emit(transfer_id, bytes_transferred, total_bytes, transfer_type, destination_panel_id)
 
 
 class MainWindow(QMainWindow):
@@ -79,8 +184,8 @@ class MainWindow(QMainWindow):
         self._update_lock = threading.Lock()
         
         # Initialize panels (will be added to stacked widget)
-        self.local_panel = FilePanel(is_remote=False)
-        self.remote_panel = FilePanel(is_remote=True)
+        self.local_panel = FilePanel(parent=self, is_remote=False)
+        self.remote_panel = FilePanel(parent=self, is_remote=True)
         self.server_to_server_panel = ServerToServerPanel(
             parent=self,
             auth_manager=self.auth_manager,
@@ -171,14 +276,14 @@ class MainWindow(QMainWindow):
             QScrollBar:vertical {
                 border: none;
                 background: #f5f5f5;
-                width: 8px;
+                width: 6px;
                 margin: 0px;
             }
             
             QScrollBar::handle:vertical {
                 background: #c1c1c1;
                 min-height: 20px;
-                border-radius: 4px;
+                border-radius: 3px;
             }
             
             QScrollBar::handle:vertical:hover {
@@ -197,14 +302,14 @@ class MainWindow(QMainWindow):
             QScrollBar:horizontal {
                 border: none;
                 background: #f5f5f5;
-                height: 8px;
+                height: 6px;
                 margin: 0px;
             }
             
             QScrollBar::handle:horizontal {
                 background: #c1c1c1;
                 min-width: 20px;
-                border-radius: 4px;
+                border-radius: 3px;
             }
             
             QScrollBar::handle:horizontal:hover {
@@ -230,32 +335,41 @@ class MainWindow(QMainWindow):
         # --- Activity Panel (logs) ---
         self.activity_view = QPlainTextEdit()
         self.activity_view.setReadOnly(True)
+        self.activity_view.setPlaceholderText("Activity log will appear here...")
         self.activity_view.setStyleSheet("""
             QPlainTextEdit {
-                background-color: #ffffff;
-                color: #222222;
-                font-family: 'Consolas', 'JetBrains Mono', 'monospace';
+                background-color: #fafafa;
+                color: #2d3748;
+                font-family: 'SF Mono', 'Monaco', 'Cascadia Code', 'Consolas', 'monospace';
                 font-size: 11px;
-                border: 1px solid #e5e5e5;
-                padding: 8px;
+                border: 1px solid #e2e8f0;
+                padding: 4px;
+                line-height: 1.3;
+                border-radius: 3px;
+            }
+            
+            QPlainTextEdit::selection {
+                background-color: #bee3f8;
+                color: #2d3748;
             }
             
             /* Ensure scrollbars in activity view match the modern thin style */
             QScrollBar:vertical {
                 border: none;
-                background: #f5f5f5;
-                width: 8px;
+                background: #f7fafc;
+                width: 6px;
                 margin: 0px;
+                border-radius: 3px;
             }
             
             QScrollBar::handle:vertical {
-                background: #c1c1c1;
+                background: #cbd5e0;
                 min-height: 20px;
-                border-radius: 4px;
+                border-radius: 3px;
             }
             
             QScrollBar::handle:vertical:hover {
-                background: #a8a8a8;
+                background: #a0aec0;
             }
             
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
@@ -269,19 +383,20 @@ class MainWindow(QMainWindow):
             
             QScrollBar:horizontal {
                 border: none;
-                background: #f5f5f5;
-                height: 8px;
+                background: #f7fafc;
+                height: 6px;
                 margin: 0px;
+                border-radius: 3px;
             }
             
             QScrollBar::handle:horizontal {
-                background: #c1c1c1;
+                background: #cbd5e0;
                 min-width: 20px;
-                border-radius: 4px;
+                border-radius: 3px;
             }
             
             QScrollBar::handle:horizontal:hover {
-                background: #a8a8a8;
+                background: #a0aec0;
             }
             
             QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
@@ -293,7 +408,12 @@ class MainWindow(QMainWindow):
                 background: none;
             }
         """)
+        
+        # Initialize activity tracking
         self._activity_log_last_pos = 0
+        self._shown_activities = set()  # Track unique activities to avoid duplicates
+        self._session_start_time = time.time()
+        
         log_path = os.path.join(os.path.dirname(__file__), "..", "logs", "filepilot.log")
         log_path = os.path.abspath(log_path)
         try:
@@ -305,7 +425,7 @@ class MainWindow(QMainWindow):
 
         self.activity_timer = QTimer(self)
         self.activity_timer.timeout.connect(self.update_activity_view)
-        self.activity_timer.start(1000)
+        self.activity_timer.start(2000)  # Check every 2 seconds instead of 1
 
         # --- Splitter for activity panel and main content ---
         main_splitter = QSplitter(Qt.Vertical)
@@ -327,25 +447,11 @@ class MainWindow(QMainWindow):
         self.local_panel.itemSelected.connect(self.local_item_selected)
         self.remote_panel.itemSelected.connect(self.remote_item_selected)
 
-        # Create a container widget with title and transfer mode
+        # Create a container widget with transfer mode
         transfer_container = QWidget()
         transfer_container_layout = QVBoxLayout(transfer_container)
         transfer_container_layout.setContentsMargins(0, 0, 0, 0)
         transfer_container_layout.setSpacing(0)
-        
-        # Add header with current mode title
-        self.transfer_mode_title = QLabel("LOCAL TO SERVER TRANSFER")
-        self.transfer_mode_title.setAlignment(Qt.AlignCenter)
-        self.transfer_mode_title.setStyleSheet("""
-            font-weight: bold;
-            font-size: 12pt;
-            color: #222222;
-            padding: 8px;
-            background-color: #f0f0f0;
-            border-bottom: 1px solid #e0e0e0;
-            letter-spacing: 1px;
-        """)
-        transfer_container_layout.addWidget(self.transfer_mode_title)
         
         # --- Stacked Widget for different transfer modes ---
         self.transfer_mode_stacked_widget = QStackedWidget()
@@ -369,7 +475,7 @@ class MainWindow(QMainWindow):
         main_splitter.addWidget(splitter)  # 'splitter' is your main content (file panels, transfer panel, etc.)
 
         # Set initial sizes: [activity panel height, rest of window]
-        main_splitter.setSizes([140, 600])
+        main_splitter.setSizes([80, 600])
 
         main_layout.addWidget(main_splitter)
         
@@ -389,6 +495,9 @@ class MainWindow(QMainWindow):
         # Set application font with modern typography
         self.setup_modern_fonts()
         
+        # Initialize thread-safe overwrite handler
+        self.overwrite_handler = ThreadSafeOverwriteHandler(self)
+
     def setup_modern_fonts(self):
         """Configure modern fonts for the application"""
         # Set up the main application font with fallbacks
@@ -634,7 +743,6 @@ class MainWindow(QMainWindow):
             self.transfer_mode_stacked_widget.setCurrentIndex(1) # Show server-to-server panel
             self.toggle_transfer_mode_action.setText("Local to Server Transfer") #
             self.toggle_transfer_mode_action.setIcon(self.style().standardIcon(QStyle.SP_ComputerIcon)) # Change icon
-            self.transfer_mode_title.setText("SERVER TO SERVER TRANSFER")
             
             # Disconnect previous remote connection if any
             if self.remote_panel.client:
@@ -650,7 +758,6 @@ class MainWindow(QMainWindow):
             self.transfer_mode_stacked_widget.setCurrentIndex(0) # Show local-to-server panel
             self.toggle_transfer_mode_action.setText("Server to Server Transfer") #
             self.toggle_transfer_mode_action.setIcon(self.style().standardIcon(QStyle.SP_DirLinkIcon)) # Change icon
-            self.transfer_mode_title.setText("LOCAL TO SERVER TRANSFER")
 
             # Disconnect server-to-server connections if any
             self.server_to_server_panel.disconnect_all() #
@@ -713,19 +820,13 @@ class MainWindow(QMainWindow):
 
         # Create overwrite callback for upload
         def upload_overwrite_callback(remote_file_path):
-            reply = CustomMessageBox.question(
-                self, "File Exists",
-                f"The file '{os.path.basename(remote_file_path)}' already exists on the remote server.\n\n"
-                f"Remote path: {remote_file_path}\n\n"
-                "Do you want to overwrite it?",
-                CustomMessageBox.Yes | CustomMessageBox.No, CustomMessageBox.No)
-            return reply == CustomMessageBox.Yes
+            return self.overwrite_handler.request_overwrite_confirmation(remote_file_path, "upload")
         
         # Start the transfer using the signal bridge for thread-safe callbacks
         transfer_id = self.transfer_manager.upload_file(
             source_full_path, destination_full_path, remote_server_config,
-            # Pass TransferType.UPLOAD and a reference to the remote_panel
-            lambda tid, tr, tt: self.signal_bridge.update_progress(tid, tr, tt, TransferType.UPLOAD, self.remote_panel),
+            # Pass TransferType.UPLOAD and panel identifier instead of object reference
+            lambda tid, tr, tt: self.signal_bridge.update_progress(tid, tr, tt, TransferType.UPLOAD, "remote_panel"),
             upload_overwrite_callback)
         
         if transfer_id:
@@ -780,13 +881,7 @@ class MainWindow(QMainWindow):
 
         # Create overwrite callback for download
         def download_overwrite_callback(local_file_path):
-            reply = CustomMessageBox.question(
-                self, "File Exists",
-                f"The file '{os.path.basename(local_file_path)}' already exists locally.\n\n"
-                f"Local path: {local_file_path}\n\n"
-                "Do you want to overwrite it?",
-                CustomMessageBox.Yes | CustomMessageBox.No, CustomMessageBox.No)
-            return reply == CustomMessageBox.Yes
+            return self.overwrite_handler.request_overwrite_confirmation(local_file_path, "download")
         
         # Start the transfer using the signal bridge for thread-safe callbacks
         transfer_id = self.transfer_manager.download_file(
@@ -806,59 +901,51 @@ class MainWindow(QMainWindow):
     
     def upload_file(self):
         """Upload a file or directory to the remote server (only in local-to-server mode)."""
-        if self.current_mode != "local_to_server": #
+        if self.current_mode != "local_to_server":
             CustomMessageBox.information(self, "Mode Mismatch", "Upload/Download actions are for Local to Server mode. Please switch modes or use Server to Server transfer directly.")
             return
 
         # Get the selected file or directory from the local panel
-        selected_items = self.local_panel.file_view.selectedIndexes() #
+        selected_items = self.local_panel.file_view.selectedIndexes()
         if not selected_items:
             CustomMessageBox.warning(self, "No Selection", "Please select a file or directory to upload.")
             return
         
         # For now, just get the first selected item
-        index = selected_items[0] #
-        # Data is stored in column 0 of the model, not the index itself
-        full_path = index.sibling(index.row(), 0).data(Qt.UserRole) 
+        index = selected_items[0]
+        full_path = index.sibling(index.row(), 0).data(Qt.UserRole)
         is_dir = index.sibling(index.row(), 0).data(Qt.UserRole + 1)
-        
-        # Get the current path in the remote panel
-        remote_path = self.remote_panel.current_path #
-        
+
+        remote_path = self.remote_panel.current_path
         if is_dir:
-            # If it's a directory, just use the remote path as the base for destination
             source_path = full_path
-            # The destination path should be the remote_path plus the directory name
             destination_path = os.path.join(remote_path, os.path.basename(full_path)).replace('\\', '/')
         else:
-            # If it's a file, ask where to upload
-            # Pre-fill with the remote current path and the file name
             default_remote_path = os.path.join(remote_path, os.path.basename(full_path)).replace('\\', '/')
             destination_path, ok = QInputDialog.getText(self, "Upload File", "Remote destination path:", QLineEdit.Normal, default_remote_path)
             if not ok or not destination_path:
                 return
             source_path = full_path
-        
+
         if destination_path:
             if not self.remote_panel.client:
                 CustomMessageBox.warning(self, "No Remote Connection", "Please connect to a remote server before uploading.")
                 return
 
-            remote_server_config = self.remote_panel.client.connection_config # Get the active connection config
-            
-            # Start the transfer using the signal bridge for thread-safe callbacks
+            remote_server_config = self.remote_panel.client.connection_config
+
+            # Use thread-safe overwrite handler
+            def upload_overwrite_callback(remote_file_path):
+                return self.overwrite_handler.request_overwrite_confirmation(remote_file_path, "upload")
+
             transfer_id = self.transfer_manager.upload_file(
                 source_path, destination_path, remote_server_config,
-                # Pass TransferType.UPLOAD and a reference to the remote_panel
-                lambda tid, tr, tt: self.signal_bridge.update_progress(tid, tr, tt, TransferType.UPLOAD, self.remote_panel))
-            
-            if transfer_id:
-                # Track the upload with its destination path (for refresh)
-                self.active_uploads[transfer_id] = destination_path
+                lambda tid, tr, tt: self.signal_bridge.update_progress(tid, tr, tt, TransferType.UPLOAD, "remote_panel"),
+                upload_overwrite_callback)
 
-                CustomMessageBox.information(self, "Upload Started", 
-                                    f"Upload of '{os.path.basename(source_path)}' started.")
-                # Force immediate update of the transfer panel
+            if transfer_id:
+                self.active_uploads[transfer_id] = destination_path
+                CustomMessageBox.information(self, "Upload Started", f"Upload of '{os.path.basename(source_path)}' started.")
                 self.transfer_panel.update_transfers()
             else:
                 CustomMessageBox.critical(self, "Upload Failed", "Failed to start upload.")
@@ -931,15 +1018,15 @@ class MainWindow(QMainWindow):
         pass # This method is no longer directly called by the menu action
     
     def on_transfer_progress(self, transfer_id: int, transferred: int, total: int,
-                            transfer_type: TransferType, destination_panel_ref: object = None):
+                            transfer_type: TransferType, destination_panel_id: str = None):
         """
         Update the transfer progress in the UI and refresh panels on transfer completion.
-        'destination_panel_ref' is the actual FilePanel object for S2S transfers.
+        'destination_panel_id' is a string identifier for the destination panel.
         """
         # Ensure this method only runs on the main thread
         if not QApplication.instance() or QThread.currentThread() != QApplication.instance().thread():
             # If called from a worker thread, schedule on main thread
-            QTimer.singleShot(0, lambda: self.on_transfer_progress(transfer_id, transferred, total, transfer_type, destination_panel_ref))
+            QTimer.singleShot(0, lambda: self.on_transfer_progress(transfer_id, transferred, total, transfer_type, destination_panel_id))
             return
         
         # Skip processing if the application is shutting down
@@ -990,10 +1077,16 @@ class MainWindow(QMainWindow):
                             self.status_bar.showMessage("Upload completed", 5000)
                     
                     elif transfer_type == TransferType.SERVER_TO_SERVER:
-                        # Refresh the destination panel if a reference was provided
-                        if destination_panel_ref and isinstance(destination_panel_ref, FilePanel):
-                            self._pending_refresh_panels.add(destination_panel_ref)
-                            self.status_bar.showMessage(f"Server-to-server transfer completed to {destination_panel_ref.current_path}", 5000)
+                        # Map panel identifiers to actual panel objects
+                        destination_panel = None
+                        if destination_panel_id == "source_panel" and hasattr(self.server_to_server_panel, 'source_panel'):
+                            destination_panel = self.server_to_server_panel.source_panel
+                        elif destination_panel_id == "destination_panel" and hasattr(self.server_to_server_panel, 'destination_panel'):
+                            destination_panel = self.server_to_server_panel.destination_panel
+                        
+                        if destination_panel:
+                            self._pending_refresh_panels.add(destination_panel)
+                            self.status_bar.showMessage(f"Server-to-server transfer completed to {destination_panel.current_path}", 5000)
                         else:
                             # Fallback: refresh both server-to-server panels if no specific reference
                             if hasattr(self.server_to_server_panel, 'source_panel') and self.server_to_server_panel.source_panel:
@@ -1012,7 +1105,7 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 self.logger.error(f"Error handling transfer completion for {transfer_id}: {str(e)}")
         else:
-            # For progress updates (not completion), use throttled transfer panel update
+            # For progress updates, not completion, use throttled transfer panel update
             try:
                 with self._update_lock:
                     self._pending_transfer_update = True
@@ -1069,52 +1162,253 @@ class MainWindow(QMainWindow):
             if (self.server_to_server_panel and 
                 QApplication.instance() and 
                 not QApplication.instance().closingDown()):
+                
+                # Refresh source panel
                 if hasattr(self.server_to_server_panel, 'source_panel') and self.server_to_server_panel.source_panel:
-                    self.server_to_server_panel.source_panel.refresh()
+                    self._safe_refresh_panel(self.server_to_server_panel.source_panel)
+                
+                # Refresh destination panel
                 if hasattr(self.server_to_server_panel, 'destination_panel') and self.server_to_server_panel.destination_panel:
-                    self.server_to_server_panel.destination_panel.refresh()
+                    self._safe_refresh_panel(self.server_to_server_panel.destination_panel)
         except Exception as e:
-            self.logger.error(f"Error refreshing S2S panels: {str(e)}")
+            self.logger.error(f"Error refreshing server-to-server panels: {str(e)}")
     
-    def _safe_update_transfer_panel(self):
-        """Safely update transfer panel with error handling"""
-        try:
-            if (self.transfer_panel and 
-                hasattr(self.transfer_panel, 'update_transfers') and 
-                QApplication.instance() and 
-                not QApplication.instance().closingDown()):
-                self.transfer_panel.update_transfers()
-        except Exception as e:
-            self.logger.error(f"Error updating transfer panel: {str(e)}")
-    
-    def show_about(self):
-        """Show the about dialog"""
-        title, text = SFTPMessages.APP_INFO
-        CustomMessageBox.about(self, title, text)
-
     def update_activity_view(self):
+        """Update the activity log view with new log entries"""
         log_path = os.path.join(os.path.dirname(__file__), "..", "logs", "filepilot.log")
         log_path = os.path.abspath(log_path)
-        if not hasattr(self, "_activity_log_last_pos"):
-            self._activity_log_last_pos = 0
+        
         try:
-            with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
+            with open(log_path, "rb") as f:
                 f.seek(self._activity_log_last_pos)
-                new_lines = f.readlines()
-                display_lines = []
-                for line in new_lines:
-                    if " - " in line:
-                        _, msg = line.split(" - ", 1)
-                    else:
-                        msg = line
-                    display_lines.append(msg.strip())
-                if display_lines:
-                    self.activity_view.moveCursor(self.activity_view.textCursor().End)
-                    self.activity_view.insertPlainText('\n'.join(display_lines) + '\n')
-                    self.activity_view.moveCursor(self.activity_view.textCursor().End)
+                new_data = f.read()
+                
+                if new_data:
+                    # Decode and split by lines
+                    new_lines = new_data.decode('utf-8', errors='replace').splitlines()
+                    
+                    # Filter out empty lines
+                    new_lines = [line for line in new_lines if line.strip()]
+                    
+                    # Add each new line to the activity view
+                    for line in new_lines:
+                        self.activity_view.appendPlainText(line)
+                        
+                        # Auto-scroll to bottom
+                        scrollbar = self.activity_view.verticalScrollBar()
+                        scrollbar.setValue(scrollbar.maximum())
+                
                 self._activity_log_last_pos = f.tell()
+                
         except Exception as e:
-            self.activity_view.setPlainText(f"Could not read log file:\n{e}")
+            if not hasattr(self, '_error_shown'):
+                self.activity_view.setPlainText(f"Activity log unavailable: {str(e)}")
+                self._error_shown = True
+
+        important_events = []  # Collect important events to display
+
+        try:
+            with open(log_path, "r") as f:
+                # Seek to the last known position
+                f.seek(self._activity_log_last_pos)
+                
+                # Read new lines
+                new_lines = f.readlines()
+                
+                for msg in new_lines:
+                    msg = msg.strip()
+                    if not msg:
+                        continue  # Skip empty lines
+                    
+                    # Detect and handle important events
+                    event_text = ""
+                    event_type = "info"  # Default event type
+                    
+                    # Transfer completion events
+                    if "Transfer completed with status COMPLETED" in msg and "ID:" in msg:
+                        # Extract file info from the message
+                        if "Source:" in msg and "Destination:" in msg:
+                            try:
+                                parts = msg.split("|")
+                                source_part = [p.strip() for p in parts if "Source:" in p][0]
+                                source_file = source_part.split("Source:")[-1].strip()
+                                source_name = source_file.split("/")[-1] if "/" in source_file else source_file.split("\\")[-1]
+                                event_text = f"Transfer completed: {source_name}"
+                                event_type = "success"
+                            except:
+                                event_text = "Transfer completed"
+                                event_type = "success"
+                    elif "File upload completed successfully" in msg:
+                        try:
+                            file_info = msg.split("File upload completed successfully: ")[1]
+                            if "->" in file_info:
+                                src, dst = [s.strip() for s in file_info.split("->")]
+                                file_name = src.split("/")[-1] if "/" in src else src.split("\\")[-1]
+                                event_text = f"Upload completed: {file_name}"
+                            else:
+                                event_text = "Upload completed"
+                        except:
+                            event_text = "Upload completed"
+                        event_type = "success"
+                    elif "File download completed successfully" in msg:
+                        try:
+                            file_info = msg.split("File download completed successfully: ")[1]
+                            if "->" in file_info:
+                                src, dst = [s.strip() for s in file_info.split("->")]
+                                file_name = src.split("/")[-1] if "/" in src else src.split("\\")[-1]
+                                event_text = f"Download completed: {file_name}"
+                            else:
+                                event_text = "Download completed"
+                        except:
+                            event_text = "Download completed"
+                        event_type = "success"
+                    
+                    # File operations
+                    elif "Successfully deleted remote file" in msg:
+                        file_path = msg.split("Successfully deleted remote file: ")[1]
+                        file_name = file_path.split("/")[-1] if "/" in file_path else file_path.split("\\")[-1]
+                        event_text = f"Deleted: {file_name}"
+                        event_type = "warning"
+                    elif "Successfully created remote directory" in msg:
+                        dir_path = msg.split("Successfully created remote directory: ")[1]
+                        dir_name = dir_path.split("/")[-1] if "/" in dir_path else dir_path.split("\\")[-1]
+                        event_text = f"Created directory: {dir_name}"
+                        event_type = "success"
+                    elif "Successfully renamed" in msg:
+                        parts = msg.split("Successfully renamed ")
+                        if len(parts) > 1:
+                            rename_info = parts[1]
+                            if " to " in rename_info:
+                                old_name, new_name = rename_info.split(" to ")
+                                old_name = old_name.split("/")[-1] if "/" in old_name else old_name.split("\\")[-1]
+                                new_name = new_name.split("/")[-1] if "/" in new_name else new_name.split("\\")[-1]
+                                event_text = f"Renamed: {old_name} → {new_name}"
+                            else:
+                                event_text = f"File renamed"
+                        event_type = "info"
+                    
+                    # System events
+                    elif "Detected OS from" in msg:
+                        os_info = msg.split("Detected OS from ")[1]
+                        event_text = f"Remote OS detected: {os_info}"
+                        event_type = "info"
+                    elif "Home directory determined as" in msg:
+                        home_dir = msg.split("Home directory determined as: ")[1]
+                        event_text = f"Home directory: {home_dir}"
+                        event_type = "info"
+                    elif "Integrity check passed" in msg:
+                        event_text = "Integrity check passed"
+                        event_type = "success"
+                    
+                    # Transfer control events
+                    elif "Transfer paused" in msg:
+                        if "ID:" in msg:
+                            try:
+                                transfer_id = msg.split("ID:")[1].split("|")[0].strip()
+                                event_text = f"Transfer paused (ID: {transfer_id})"
+                            except:
+                                event_text = "Transfer paused"
+                        else:
+                            event_text = "Transfer paused"
+                        event_type = "warning"
+                    elif "Transfer resumed" in msg:
+                        if "ID:" in msg:
+                            try:
+                                transfer_id = msg.split("ID:")[1].split("|")[0].strip()
+                                event_text = f"Transfer resumed (ID: {transfer_id})"
+                            except:
+                                event_text = "Transfer resumed"
+                        else:
+                            event_text = "Transfer resumed"
+                        event_type = "info"
+                    elif "Transfer canceled" in msg:
+                        if "ID:" in msg:
+                            try:
+                                transfer_id = msg.split("ID:")[1].split("|")[0].strip()
+                                event_text = f"Transfer cancelled (ID: {transfer_id})"
+                            except:
+                                event_text = "Transfer cancelled"
+                        else:
+                            event_text = "Transfer cancelled"
+                        event_type = "warning"
+                    
+                    # Error events
+                    elif "FAILED" in msg.upper():
+                        if "Transfer completed with status FAILED" in msg:
+                            # Try to extract file info
+                            if "Source:" in msg:
+                                try:
+                                    parts = msg.split("|")
+                                    source_part = [p.strip() for p in parts if "Source:" in p][0]
+                                    source_file = source_part.split("Source:")[-1].strip()
+                                    source_name = source_file.split("/")[-1] if "/" in source_file else source_file.split("\\")[-1]
+                                    event_text = f"Transfer failed: {source_name}"
+                                except:
+                                    event_text = "Transfer failed"
+                            else:
+                                event_text = "Transfer failed"
+                        else:
+                            # Other failure messages
+                            error_msg = msg[:80] + "..." if len(msg) > 80 else msg
+                            event_text = f"Error: {error_msg}"
+                        event_type = "error"
+                    elif "Error" in msg and "Transfer" in msg:
+                        # Transfer-related errors
+                        error_msg = msg[:80] + "..." if len(msg) > 80 else msg
+                        event_text = f"Error: {error_msg}"
+                        event_type = "error"
+
+                    # Add the event if it's important and not a duplicate
+                    if event_text and event_text not in self._shown_activities:
+                        important_events.append({
+                            'text': event_text,
+                            'type': event_type
+                        })
+                        self._shown_activities.add(event_text)
+                
+                # Display new important events
+                if important_events:
+                    # Move cursor to end
+                    cursor = self.activity_view.textCursor()
+                    cursor.movePosition(cursor.End)
+                    self.activity_view.setTextCursor(cursor)
+                    
+                    # Add events
+                    for event in important_events:
+                        # Add some spacing if not the first event
+                        if self.activity_view.toPlainText():
+                            self.activity_view.insertPlainText("\n")
+                        
+                        # Insert the event text
+                        self.activity_view.insertPlainText(event['text'])
+                    
+                    # Auto-scroll to bottom
+                    scrollbar = self.activity_view.verticalScrollBar()
+                    scrollbar.setValue(scrollbar.maximum())
+                
+                self._activity_log_last_pos = f.tell()
+                
+        except Exception as e:
+            if not hasattr(self, '_error_shown'):
+                self.activity_view.setPlainText(f"Activity log unavailable: {str(e)}")
+                self._error_shown = True
+
+    def show_about(self):
+        """Show the about dialog"""
+        CustomMessageBox.information(
+            self, 
+            "About FilePilot", 
+            "FilePilot SFTP Client\n\n"
+            "A secure and user-friendly SFTP client for file transfers.\n"
+            "Features include:\n"
+            "• Local to server transfers\n"
+            "• Server to server transfers\n"
+            "• Secure credential management\n"
+            "• Progress tracking and resumable transfers\n"
+            "• Modern Qt-based interface\n\n"
+            "Version: 1.0.0\n"
+            "Built with PyQt5 and paramiko"
+        )
 
 
 def run_app():
