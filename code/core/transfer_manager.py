@@ -37,7 +37,8 @@ class TransferItem:
                 dest_config: Dict = None,
                 chunks: int = 10,
                 progress_callback: Callable = None,
-                overwrite_callback: Callable = None): # Added overwrite_callback
+                overwrite_callback: Callable = None,  # Added overwrite_callback
+                chunk_size: int = 1024*1024): # Used for direct streaming
         """
         Initialize a transfer item.
         
@@ -60,6 +61,7 @@ class TransferItem:
         self.source_config = source_config or {}
         self.dest_config = dest_config or {}
         self.chunks = chunks
+        self.chunk_size = chunk_size # Store chunk size for streaming
         self.status = TransferStatus.QUEUED
         self.progress = 0.0
         self.bytes_transferred = 0
@@ -133,6 +135,7 @@ class TransferManager:
         # Connection pool to manage multiple SFTP connections safely
         self.connection_pool = {}
         self.pool_lock = threading.Lock()
+        self.file_chunk_size_in_bytes = 1024*1024 # Default to 1MB (1024 * 1024 bytes)
         
         # Set up logger
         if logger:
@@ -304,7 +307,8 @@ class TransferManager:
             dest_config=dest_config,
             chunks=chunks,
             progress_callback=progress_callback,
-            overwrite_callback=overwrite_callback
+            overwrite_callback=overwrite_callback,
+            chunk_size=self.file_chunk_size_in_bytes
         )
         
         return self.add_transfer(transfer)
@@ -572,7 +576,27 @@ class TransferManager:
             self.logger.error(f"Error calculating local file SHA-256 for {file_path}: {str(e)}")
             return None
         
-            
+    def get_file_chunk_size_in_bytes(self) -> int:
+        """
+        Returns the current default chunk size for direct server-to-server streaming.
+        Returns:
+            int: The current default chunk size in bytes.
+        """
+        return min(max(1024*128, self.file_chunk_size_in_bytes), 1024*1024*100)
+
+    def set_file_chunk_size_in_bytes(self, size: int):
+        """
+        Sets the default chunk size for direct server-to-server streaming transfers.
+        Args:
+            size: The desired chunk size in bytes.
+        """
+        if size <= 0:
+            self.logger.warning(f"Attempted to set invalid chunk size: {size}. Must be positive. Keeping current: {self.file_chunk_size_in_bytes}")
+            return
+        
+        self.file_chunk_size_in_bytes = min(max(1024*128, size), 1024*1024*100)
+        # self.logger.info(f"Default server-to-server streaming chunk size set to: {self._default_chunk_size} bytes")
+
     def _process_transfer(self, transfer: TransferItem):
         """
         Process a single transfer item with proper error isolation.
@@ -753,6 +777,8 @@ class TransferManager:
                 if transfer.cancel_event.is_set():
                     transfer.status = TransferStatus.CANCELED
                     self.logger.info(f"Transfer {transfer.id} canceled after upload_file call.")
+                    self.logger.info(f"Deleting partially sent file on remote server.")
+                    dest_client.remove(transfer.dest_path)
                     return
                 if not result:
                     transfer.status = TransferStatus.FAILED
@@ -788,6 +814,9 @@ class TransferManager:
                 if transfer.cancel_event.is_set():
                     transfer.status = TransferStatus.CANCELED
                     self.logger.info(f"Transfer {transfer.id} canceled after download_file call.")
+                    self.logger.info(f"Deleting partially downloaded file")
+                    if os.path.exists(transfer.dest_path):
+                        os.remove(transfer.dest_path)
                     return  
                 if not result:
                     transfer.status = TransferStatus.FAILED
@@ -836,6 +865,7 @@ class TransferManager:
                     transfer.source_path,
                     dest_client,
                     transfer.dest_path,
+                    chunk_size=transfer.chunk_size,
                     progress_callback=sftp_progress_wrapper, # Pass our wrapper
                     overwrite_callback=s2s_overwrite_callback,
                     cancel_event=transfer.cancel_event
@@ -844,6 +874,8 @@ class TransferManager:
                 if transfer.cancel_event.is_set():
                     transfer.status = TransferStatus.CANCELED
                     self.logger.info(f"Transfer {transfer.id} canceled after server_to_server_transfer call.")
+                    self.logger.info(f"Deleting partially sent file on remote server.")
+                    dest_client.remove(transfer.dest_path)
                     return
 
                 if not result:

@@ -25,7 +25,8 @@ from code.gui.conn_manager import ConnectionManagerDialog
 from code.gui.custom_message_box import CustomMessageBox, SFTPMessages
 from code.gui.server_to_server_panel import ServerToServerPanel, LocalToServerPanel
 
-
+from code.utils.file_utils import FileIconProvider
+    
 class ThreadSafeOverwriteHandler(QObject):
     """
     Thread-safe handler for overwrite dialogs to prevent Qt threading violations.
@@ -152,6 +153,108 @@ class TransferSignalBridge(QObject):
         self.progressUpdated.emit(transfer_id, bytes_transferred, total_bytes, transfer_type, destination_panel_id)
 
 
+class FileChunkSizeDialog(QDialog):
+    def __init__(self, parent=None, transfer_manager: TransferManager =None, settings: QSettings = None):
+        super().__init__(parent)
+        self.transfer_manager = transfer_manager
+        self.settings = settings
+        self.setWindowTitle("File Chunk Size")
+        self.setMinimumWidth(320)
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #ffffff;
+                border: 1px solid #ddd;
+                font-family: 'Segoe UI', 'Inter', 'Roboto', sans-serif;
+                font-size: 10pt;
+            }
+            QLabel {
+                font-weight: 500;
+                color: #333;
+            }
+            QComboBox {
+                padding: 4px 8px;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                background-color: #fdfdfd;
+                min-width: 80px;
+            }
+            QComboBox::drop-down {
+                width: 20px;
+                border-left: 1px solid #ccc;
+            }
+            QDialogButtonBox QPushButton {
+                padding: 6px 16px;
+                border-radius: 4px;
+                background-color: #333333;
+                color: white;
+                font-weight: 500;
+            }
+            QDialogButtonBox QPushButton:disabled {
+                background-color: #ccc;
+                color: #eee;
+            }
+        """)
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setSpacing(10)
+
+        # Input layout
+        input_layout = QHBoxLayout()
+        input_layout.setSpacing(10)
+
+        label = QLabel("File Chunk Size:")
+        self.size_input = QComboBox()
+        self.unit_input = QComboBox()
+        self.unit_input.addItems(["KB", "MB"])
+        self.unit_input.currentTextChanged.connect(self.update_size_options)
+
+        input_layout.addWidget(label)
+        input_layout.addWidget(self.size_input)
+        input_layout.addWidget(self.unit_input)
+
+        layout.addLayout(input_layout)
+
+        # Dialog buttons
+        self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.button_box.accepted.connect(self.accept)
+        self.button_box.rejected.connect(self.reject)
+        layout.addWidget(self.button_box)
+
+        self.setLayout(layout)
+        self.load_values()
+
+    def update_size_options(self):
+        unit = self.unit_input.currentText()
+        self.size_input.clear()
+        if unit == "KB":
+            self.size_input.addItems(["128", "256", "512"])
+        else:
+            self.size_input.addItems(["1", "2", "5", "10", "15", "20", "50", "100"])
+
+    def load_values(self):
+        chunk_size_bytes = self.settings.value("chunk_size_bytes", 1024 * 1024, type=int)
+        if chunk_size_bytes >= 1024 * 1024:
+            self.unit_input.setCurrentText("MB")
+            size_val = chunk_size_bytes // (1024 * 1024)
+        else:
+            self.unit_input.setCurrentText("KB")
+            size_val = chunk_size_bytes // 1024
+
+        self.update_size_options()
+        index = self.size_input.findText(str(size_val))
+        if index != -1:
+            self.size_input.setCurrentIndex(index)
+
+    def accept(self):
+        size = int(self.size_input.currentText())
+        unit = self.unit_input.currentText()
+        chunk_size_bytes = size * 1024 if unit == "KB" else size * 1024 * 1024
+        self.settings.setValue("chunk_size_bytes", chunk_size_bytes)
+        self.transfer_manager.set_file_chunk_size_in_bytes(chunk_size_bytes)
+        super().accept()
+
+
 class MainWindow(QMainWindow):
     """Main application window for the SFTP client"""
     
@@ -161,6 +264,8 @@ class MainWindow(QMainWindow):
         
         # Initialize logger first
         self.setup_logger()
+        
+        self.icon_provider = FileIconProvider()
         
         # Pass logger to transfer manager
         self.transfer_manager = TransferManager(logger=self.logger)
@@ -192,6 +297,10 @@ class MainWindow(QMainWindow):
             transfer_manager=self.transfer_manager,
             signal_bridge=self.signal_bridge
         )
+
+        # Load settings
+        self.settings = QSettings("FilePilot", "FilePilotSFTPClient")
+        self.load_settings()
 
         self.current_mode = "local_to_server" # Initial mode
 
@@ -643,6 +752,12 @@ class MainWindow(QMainWindow):
         self.toggle_transfer_mode_action.triggered.connect(self.toggle_transfer_mode)
         transfer_menu.addAction(self.toggle_transfer_mode_action) #
         
+        # Settings menu
+        settings_menu = self.menuBar().addMenu("Settings")
+        settings_action = QAction(self.icon_provider.get_settings_icon(), "Change file chunk size", self) 
+        settings_action.triggered.connect(self.show_chunk_size_dialog)
+        settings_menu.addAction(settings_action)
+
         # Help menu
         help_menu = self.menuBar().addMenu("Help") #
         
@@ -654,6 +769,31 @@ class MainWindow(QMainWindow):
         # Restore the window geometry if available
         self.restore_geometry() #
     
+    def load_settings(self):
+        """Loads application settings from QSettings and applies them."""
+
+        # Load chunk size (stored in bytes)
+        # Ensure the key "chunk_size_bytes" is used, consistent with SettingsDialog
+        
+        chunk_size_bytes = self.settings.value("chunk_size_bytes", 1024*1024, type=int)
+        
+        if self.transfer_manager: # Ensure manager exists before setting
+            self.transfer_manager.set_file_chunk_size_in_bytes(chunk_size_bytes)
+            # self.logger.info(f"Loaded default chunk size: {chunk_size_bytes} bytes")
+        else:
+            self.logger.warning("Transfer manager not initialized during settings load. Chunk size defaults to 1MB.")
+
+        # You might also want to call apply_settings_to_managers here if it's meant to apply all loaded settings
+        # self.apply_settings_to_managers()
+
+    def show_chunk_size_dialog(self):
+        dialog = FileChunkSizeDialog(self, transfer_manager=self.transfer_manager, settings = self.settings)
+        if dialog.exec_() == QDialog.Accepted:
+            if self.transfer_manager:
+                CustomMessageBox.information(self, "Settings Saved", "File chunk size updated.")
+            else:
+                CustomMessageBox.warning(self, "Error", "Transfer manager not initialized.")
+                
     def closeEvent(self, event):
         """Handle window close event with enhanced cleanup for transfer safety"""
         # Save the window geometry

@@ -80,6 +80,7 @@ class FileIconProvider:
         # Default icons
         self.default_file_icon = os.path.join(self.icons_path, 'file.svg')
         self.folder_icon = os.path.join(self.icons_path, 'folder.svg')
+        self.settings_icon = os.path.join(self.icons_path, 'settings.svg')
         
     def get_icon_for_file(self, filename):
         """
@@ -146,6 +147,13 @@ class FileIconProvider:
             self.icons[self.folder_icon] = QIcon(self.folder_icon)
             
         return self.icons[self.folder_icon]
+    
+    def get_settings_icon(self):
+        """Get the settings icon"""
+        if self.settings_icon not in self.icons:
+            self.icons[self.settings_icon] = QIcon(self.settings_icon)
+            
+        return self.icons[self.settings_icon]
         
     def get_icon_for_mime_type(self, mime_type):
         """

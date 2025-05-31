@@ -939,7 +939,7 @@ class SFTPClient:
                                 source_path: str,
                                 dest_client: 'SFTPClient',
                                 dest_path: str,
-                                chunk_size: int = 1048576,  # e.g., 1MB chunks
+                                chunk_size: int = 1024*1024,  # e.g., 1MB chunks
                                 progress_callback: Callable = None,
                                 overwrite_callback: Callable[[str], bool] = None,
                                 cancel_event=None) -> bool:
@@ -959,6 +959,8 @@ class SFTPClient:
         Returns:
             bool: True if the transfer was successful, False otherwise.
         """
+        if chunk_size == None: chunk_size = 1024*1024
+
         if not source_client.sftp or not dest_client.sftp:
             self.logger.error("Both source and destination SFTP clients must be connected.")
             return False
