@@ -1,7 +1,8 @@
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QComboBox, 
     QTreeView, QLineEdit, QLabel, QSplitter,
     QMessageBox, QDialog, QDialogButtonBox, QFormLayout, QComboBox, QCompleter, QStyle,
-    QAbstractItemView, QHeaderView, QMenu, QInputDialog, QApplication
+    QAbstractItemView, QHeaderView, QMenu, QInputDialog, QApplication,
+    QCheckBox
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QDir, QTimer, QThread, QUrl, QModelIndex
 from PyQt5.QtGui import QStandardItemModel, QStandardItem, QIcon, QPixmap, QFont, QDesktopServices
@@ -573,6 +574,7 @@ class FilePanel(QWidget):
             
         rename_action = menu.addAction("Rename") 
         delete_action = menu.addAction("Delete")
+        perm_action = menu.addAction("Change Permissions...")  # <-- Add this line
 
         action = menu.exec_(self.file_view.viewport().mapToGlobal(position))
 
@@ -599,6 +601,8 @@ class FilePanel(QWidget):
                                   f"Are you sure you want to delete '{os.path.basename(full_path)}'? This cannot be undone.",
                                   CustomMessageBox.Yes | CustomMessageBox.No) == CustomMessageBox.Yes:
                 self.delete_item(full_path, is_dir)
+        elif action == perm_action:
+            self.change_permissions(full_path, is_dir)
         elif action == transfer_action:
             if not is_dir:
                 if self.is_remote:
@@ -834,3 +838,112 @@ class FilePanel(QWidget):
         self.file_view.header().resizeSection(3, max(60, int(total_width * 0.15)))  # Permissions
         
         # The Modified column automatically stretches to fill remaining space
+
+    def change_permissions(self, path, is_dir):
+        """Show dialog and change file/directory permissions."""
+        try:
+            if self.is_remote:
+                if not self.client:
+                    CustomMessageBox.warning(self, "Not Connected", "Please connect to a server first.")
+                    return
+                # Get current mode from remote
+                attrs = self.client.stat(path)
+                current_mode = attrs.st_mode
+            else:
+                if not os.path.exists(path):
+                    CustomMessageBox.warning(self, "Not Found", f"Path not found: {path}")
+                    return
+                current_mode = os.stat(path).st_mode
+
+            dlg = PermissionsDialog(self, current_mode)
+            if dlg.exec_() == QDialog.Accepted:
+                new_mode = dlg.get_mode()
+                if new_mode is None:
+                    CustomMessageBox.warning(self, "Invalid", "Invalid octal value.")
+                    return
+                if self.is_remote:
+                    ok = self.client.chmod(path, new_mode)
+                    if not ok:
+                        CustomMessageBox.critical(self, "Failed", "Failed to change permissions.")
+                        return
+                else:
+                    os.chmod(path, new_mode)
+                self._schedule_safe_refresh()
+        except Exception as e:
+            CustomMessageBox.critical(self, "Error", f"Failed to change permissions: {e}")
+
+class PermissionsDialog(QDialog):
+    def __init__(self, parent, current_mode):
+        super().__init__(parent)
+        self.setWindowTitle("Change Permissions")
+        self.setModal(True)
+        self.setMinimumSize(350, 200) 
+        layout = QVBoxLayout(self)
+
+        # Owner, Group, Others checkboxes
+        self.checks = {}
+        perms = [
+            ("Owner", stat.S_IRUSR, stat.S_IWUSR, stat.S_IXUSR),
+            ("Group", stat.S_IRGRP, stat.S_IWGRP, stat.S_IXGRP),
+            ("Others", stat.S_IROTH, stat.S_IWOTH, stat.S_IXOTH),
+        ]
+        for label, r, w, x in perms:
+            row = QHBoxLayout()
+            row.addWidget(QLabel(label))
+            for name, bit in zip(["R", "W", "X"], [r, w, x]):
+                cb = QCheckBox(name)
+                cb.setChecked(bool(current_mode & bit))
+                self.checks[(label, name)] = cb
+                row.addWidget(cb)
+            layout.addLayout(row)
+
+        # Octal input
+        self.octal_edit = QLineEdit(oct(current_mode & 0o777)[2:].zfill(3))
+        layout.addWidget(QLabel("Octal:"))
+        layout.addWidget(self.octal_edit)
+
+        # Buttons
+        btns = QHBoxLayout()
+        ok = QPushButton("OK")
+        cancel = QPushButton("Cancel")
+        ok.clicked.connect(self.accept)
+        cancel.clicked.connect(self.reject)
+        btns.addWidget(ok)
+        btns.addWidget(cancel)
+        layout.addLayout(btns)
+
+        # Sync checkboxes and octal
+        for cb in self.checks.values():
+            cb.stateChanged.connect(self.update_octal)
+        self.octal_edit.textChanged.connect(self.update_checks)
+
+    def update_octal(self):
+        mode = 0
+        if self.checks[("Owner", "R")].isChecked(): mode |= stat.S_IRUSR
+        if self.checks[("Owner", "W")].isChecked(): mode |= stat.S_IWUSR
+        if self.checks[("Owner", "X")].isChecked(): mode |= stat.S_IXUSR
+        if self.checks[("Group", "R")].isChecked(): mode |= stat.S_IRGRP
+        if self.checks[("Group", "W")].isChecked(): mode |= stat.S_IWGRP
+        if self.checks[("Group", "X")].isChecked(): mode |= stat.S_IXGRP
+        if self.checks[("Others", "R")].isChecked(): mode |= stat.S_IROTH
+        if self.checks[("Others", "W")].isChecked(): mode |= stat.S_IWOTH
+        if self.checks[("Others", "X")].isChecked(): mode |= stat.S_IXOTH
+        self.octal_edit.setText(oct(mode & 0o777)[2:].zfill(3))
+
+    def update_checks(self):
+        try:
+            val = int(self.octal_edit.text(), 8)
+        except Exception:
+            return
+        for (label, name), bit in [
+            (("Owner", "R"), stat.S_IRUSR), (("Owner", "W"), stat.S_IWUSR), (("Owner", "X"), stat.S_IXUSR),
+            (("Group", "R"), stat.S_IRGRP), (("Group", "W"), stat.S_IWGRP), (("Group", "X"), stat.S_IXGRP),
+            (("Others", "R"), stat.S_IROTH), (("Others", "W"), stat.S_IWOTH), (("Others", "X"), stat.S_IXOTH),
+        ]:
+            self.checks[(label, name)].setChecked(bool(val & bit))
+
+    def get_mode(self):
+        try:
+            return int(self.octal_edit.text(), 8)
+        except Exception:
+            return None

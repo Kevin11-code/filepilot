@@ -1245,3 +1245,15 @@ class SFTPClient:
             # If all else fails, return root
             self.logger.warning("Could not determine home directory, defaulting to root (/)")
             return "/"
+    
+    def stat(self, path):
+        """Return stat info for a remote file or directory."""
+        return self.sftp.stat(path)
+    
+    def chmod(self, path, mode):
+        """Change permissions of a remote file or directory."""
+        try:
+            self.sftp.chmod(path, mode)
+            return True
+        except Exception:
+            return False
