@@ -9,10 +9,11 @@ from PyQt5.QtWidgets import (
     QHeaderView, QAbstractItemView, QProgressBar, QMenu, QAction, QComboBox,
     QDialog, QDialogButtonBox, QFormLayout, QSpinBox, QCheckBox, QTableWidget,
     QTableWidgetItem, QSplitter, QFrame, QInputDialog, QStyle, QStackedWidget,
-    QPlainTextEdit
+    QPlainTextEdit, QSplashScreen
 )
+
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QModelIndex, QSize, QSettings, QObject
-from PyQt5.QtGui import QIcon, QStandardItemModel, QStandardItem, QFont
+from PyQt5.QtGui import QIcon, QStandardItemModel, QStandardItem, QFont, QPixmap, QColor, QPainter
 
 from code.core.auth_manager import AuthManager
 from code.core.transfer_manager import TransferManager, TransferType
@@ -1586,7 +1587,37 @@ def run_app():
     Initialize and launch the FilePilot application.
     """
     app = QApplication(sys.argv)
-    window = MainWindow()
-    window.show()
-    window.refresh_connections() #
-    sys.exit(app.exec_()) #
+
+    # Set splash screen size
+    splash_width, splash_height = 600, 400
+    splash_pix = QPixmap(splash_width, splash_height)
+    splash_pix.fill(QColor("white"))
+
+    # Path to your logo
+    logo_path = os.path.join(os.path.dirname(__file__), "..", "..", "icon", "filePilot.png")
+    logo_path = os.path.abspath(logo_path)
+
+    # Draw the logo scaled to fit the splash screen
+    if os.path.exists(logo_path):
+        logo_pix = QPixmap(logo_path)
+        if not logo_pix.isNull():
+            scaled_logo = logo_pix.scaled(splash_width, splash_height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            painter = QPainter(splash_pix)
+            x = (splash_width - scaled_logo.width()) // 2
+            y = (splash_height - scaled_logo.height()) // 2
+            painter.drawPixmap(x, y, scaled_logo)
+            painter.end()
+
+    splash = QSplashScreen(splash_pix)
+    splash.show()
+    app.processEvents()
+
+    def show_main():
+        window = MainWindow()
+        window.show()
+        splash.finish(window)
+        window.refresh_connections()
+
+    # Show splash for 2 seconds, then show main window
+    QTimer.singleShot(2000, show_main)
+    sys.exit(app.exec_())
