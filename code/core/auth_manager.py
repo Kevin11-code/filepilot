@@ -11,7 +11,8 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 # Import secure string management from utils
 from code.utils.secure_string import SecureString, SecureCredentialManager, get_credential_manager
-
+from code.utils.path_utils import get_user_config_path
+from code.utils.secure_string import SecureTemporaryCredentials
 
 class AuthManager:
     """
@@ -20,7 +21,8 @@ class AuthManager:
     def __init__(self, config_dir='config'):
         """Initialize the authentication manager with a config directory."""
         self.config_dir = config_dir
-        self.connections_file = os.path.join(config_dir, 'connections.json')
+        self.connections_file = get_user_config_path()
+        print(f"Using connections file: {self.connections_file}")
         self._credential_manager = get_credential_manager()
         self._ensure_config_dir()
         
@@ -142,7 +144,6 @@ class AuthManager:
                 
                 # Use secure context manager for keyring storage
                 if temp_creds:
-                    from utils.secure_string import SecureTemporaryCredentials
                     with SecureTemporaryCredentials(temp_creds) as plain_creds:
                         if 'password' in plain_creds:
                             keyring.set_password('filepilot', f'{name}_password', plain_creds['password'])
@@ -158,7 +159,6 @@ class AuthManager:
                 
                 # Use secure context manager for config storage
                 if temp_creds:
-                    from utils.secure_string import SecureTemporaryCredentials
                     with SecureTemporaryCredentials(temp_creds) as plain_creds:
                         if 'password' in plain_creds:
                             connection['password'] = plain_creds['password']

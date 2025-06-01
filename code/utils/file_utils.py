@@ -1,6 +1,7 @@
 import os
 from PyQt5.QtGui import QIcon
 import mimetypes
+from code.utils.resource_utils import get_resource_path
 
 class FileIconProvider:
     """
@@ -12,10 +13,7 @@ class FileIconProvider:
         mimetypes.init()
         
         # Base path to icons
-        self.icons_path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'code',
-            'resources', 'icons'
-        )
+        self.icons_path = get_resource_path('code/resources/icons')
         
         # Icons dictionary
         self.icons = {}

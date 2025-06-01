@@ -28,7 +28,7 @@ from code.gui.server_to_server_panel import ServerToServerPanel, LocalToServerPa
 from code.gui.thread_safe_handler import ThreadSafeOverwriteHandler
 from code .gui.transfer_signal_bridge import TransferSignalBridge
 from code .gui.chunk_size_dialog import FileChunkSizeDialog
-
+from code.utils.resource_utils import get_resource_path
 from code.utils.file_utils import FileIconProvider
 
 class MainWindow(QMainWindow):
@@ -1369,8 +1369,8 @@ def run_app():
     splash_pix.fill(QColor("white"))
 
     # Path to your logo
-    logo_path = os.path.join(os.path.dirname(__file__), "..", "..", "icon", "filePilot.png")
-    logo_path = os.path.abspath(logo_path)
+    
+    logo_path = get_resource_path('icon/filePilot.png')
 
     # Draw the logo scaled to fit the splash screen
     if os.path.exists(logo_path):

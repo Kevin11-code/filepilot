@@ -6,6 +6,7 @@ import sys
 import json
 import getpass
 from typing import Dict, Any, Optional
+from code.utils.path_utils import get_user_config_path
 
 # Add the parent directory to the path to allow imports
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -19,6 +20,7 @@ from ..core.transfer_manager import TransferManager
 from ..utils.logger import LoggerSetup
 import secrets
 import gc
+from code.config.path_utils import get_user_config_path
 
 
 class CLIHandler:
@@ -44,10 +46,7 @@ class CLIHandler:
         )
         
         # Initialize managers
-        self.config_dir = config_dir or os.path.join(
-            os.path.dirname(__file__), "..", "config"
-        )
-        self.auth_manager = AuthManager(self.config_dir)
+        self.auth_manager = AuthManager() 
         self.transfer_manager = TransferManager(logger=self.logger)
         
         # Track active credentials for cleanup

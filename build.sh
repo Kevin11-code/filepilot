@@ -15,15 +15,24 @@ echo "Detected OS: $OS"
 # Build for the detected platform
 if [[ "$OS" == "Linux" ]]; then
     echo "Building for Linux..."
-    pyinstaller --onefile --name "$APP_NAME" "$SCRIPT_NAME"
+    pyinstaller --onefile --name "$APP_NAME" \
+      --add-data "code/resources/icons:resources/icons" \
+      --add-data "icon:icon" \
+      "$SCRIPT_NAME"
 
 elif [[ "$OS" == "Darwin" ]]; then
     echo "Building for macOS..."
-    pyinstaller --onefile --name "$APP_NAME" "$SCRIPT_NAME"
+    pyinstaller --onefile --name "$APP_NAME" \
+      --add-data "code/resources/icons:resources/icons" \
+      --add-data "icon:icon" \
+      "$SCRIPT_NAME"
 
 elif [[ "$OS" == "MINGW"* || "$OS" == "MSYS"* || "$OS" == "CYGWIN"* ]]; then
     echo "Building for Windows..."
-    pyinstaller --onefile --name "$APP_NAME" "$SCRIPT_NAME"
+    pyinstaller --onefile --name "$APP_NAME" \
+      --add-data "code/resources/icons;resources/icons" \
+      --add-data "icon;icon" \
+      "$SCRIPT_NAME"
 
 else
     echo "Unsupported OS: $OS"

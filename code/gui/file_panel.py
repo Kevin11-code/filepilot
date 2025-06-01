@@ -20,6 +20,7 @@ from code.gui.custom_message_box import CustomMessageBox, SFTPMessages
 
 from code.utils.file_utils import FileIconProvider
 from code.utils.secure_string import SecureTemporaryCredentials
+from code.utils.resource_utils import get_resource_path
 import secrets
 import gc
 
@@ -213,12 +214,12 @@ class FilePanel(QWidget):
         path_bar_layout.setSpacing(5)
         
         # Add back and refresh buttons at the start
-        self.up_button = QPushButton(QIcon("resources/icons/back.svg"), "")
-        self.up_button.setToolTip("Go Up Directory")
+        self.up_button = QPushButton(QIcon(get_resource_path('code/resources/icons/back.svg')), "")
+        self.refresh_button = QPushButton(QIcon(get_resource_path('code/resources/icons/refresh.svg')), "")
         self.up_button.clicked.connect(self.go_up_directory)
         path_bar_layout.addWidget(self.up_button)
         
-        self.refresh_button = QPushButton(QIcon("resources/icons/refresh.svg"), "")
+        self.refresh_button = QPushButton(QIcon(get_resource_path('code/resources/icons/refresh.svg')), "")
         self.refresh_button.setToolTip("Refresh Directory")
         self.refresh_button.clicked.connect(self.refresh)
         path_bar_layout.addWidget(self.refresh_button)
@@ -258,7 +259,7 @@ class FilePanel(QWidget):
         self.file_view.setRootIsDecorated(False)
         self.file_view.setSortingEnabled(True)
         self.file_view.setIndentation(10)
-        self.file_view.setSelectionMode(QAbstractItemView.ExtendedSelection) # Allow multiple selection
+        self.file_view.setSelectionMode(QAbstractItemView.SingleSelection)  # Allow only single selection
         self.file_view.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.file_view.setEditTriggers(QAbstractItemView.NoEditTriggers)  # Disable all cell editing
         self.file_view.clicked.connect(self.on_item_clicked)  # Handle single clicks
