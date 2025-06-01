@@ -30,7 +30,7 @@ from code .gui.transfer_signal_bridge import TransferSignalBridge
 from code .gui.chunk_size_dialog import FileChunkSizeDialog
 from code.utils.resource_utils import get_resource_path
 from code.utils.file_utils import FileIconProvider
-from code.config.path_utils import get_user_log_path
+from code.utils.path_utils import get_user_log_path
 
 class MainWindow(QMainWindow):
     """Main application window for the SFTP client"""
@@ -91,7 +91,7 @@ class MainWindow(QMainWindow):
         log_path = get_user_log_path()
         self.logger = LoggerSetup.setup_logger(
             name="filepilot",
-            log_file=og_path,
+            log_file=log_path,
             log_to_console=True
         )
     

@@ -20,7 +20,6 @@ from ..core.transfer_manager import TransferManager
 from ..utils.logger import LoggerSetup
 import secrets
 import gc
-from code.config.path_utils import get_user_config_path
 
 
 class CLIHandler:

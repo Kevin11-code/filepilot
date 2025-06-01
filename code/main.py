@@ -33,6 +33,8 @@ def main():
                 from cli.cli_handler import main as cli_main
             except ImportError:
                 print("Error: Could not import CLI module.")
+                import traceback
+                traceback.print_exc()
                 sys.exit(1)
         cli_main()
     else:
@@ -50,6 +52,8 @@ def main():
                     from gui.main_window import MainWindow, run_app
                 except ImportError:
                     print("Error: Could not import GUI module.")
+                    import traceback
+                    traceback.print_exc()
                     sys.exit(1)
         except ImportError:
             print("Error: PyQt5 is required for the GUI interface.")

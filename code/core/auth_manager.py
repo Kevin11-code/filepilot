@@ -18,11 +18,12 @@ class AuthManager:
     """
     Manages authentication credentials for SFTP connections with secure storage options.
     """
-    def __init__(self, config_dir='config'):
+    def __init__(self, config_dir=None):
         """Initialize the authentication manager with a config directory."""
+        if config_dir is None:
+            config_dir = os.path.dirname(get_user_config_path())
         self.config_dir = config_dir
         self.connections_file = get_user_config_path()
-        print(f"Using connections file: {self.connections_file}")
         self._credential_manager = get_credential_manager()
         self._ensure_config_dir()
         

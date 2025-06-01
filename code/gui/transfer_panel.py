@@ -8,7 +8,7 @@ from PyQt5.QtCore import QTimer, Qt, QThread
 from PyQt5.QtGui import QFont, QColor
 
 from code.gui.custom_message_box import CustomMessageBox
-from code.config.path_utils import get_user_log_path
+from code.utils.path_utils import get_user_log_path
 
 log_file = get_user_log_path()
 

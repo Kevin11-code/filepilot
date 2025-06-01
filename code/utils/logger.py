@@ -3,7 +3,7 @@ import logging
 import sys
 from logging.handlers import RotatingFileHandler
 from typing import Optional
-from code.config.path_utils import get_user_log_path
+from code.utils.path_utils import get_user_log_path
 
 class LoggerSetup:
     """
