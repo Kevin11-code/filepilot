@@ -860,7 +860,7 @@ class TransferManager:
                 # )
         
                 # Server to server using buffer of our machine, does not store on disk
-                result = client.stream_remote_to_remote(
+                result = client._remote_to_remote(
                     source_client,
                     transfer.source_path,
                     dest_client,
