@@ -8,12 +8,12 @@ from PyQt5.QtCore import QTimer, Qt, QThread
 from PyQt5.QtGui import QFont, QColor
 
 from code.gui.custom_message_box import CustomMessageBox
+from code.config.path_utils import get_user_log_path
 
-# Ensure log directory exists
-os.makedirs("logs", exist_ok=True)
+log_file = get_user_log_path()
 
 logging.basicConfig(
-    filename='logs/filepilot.log',
+    filename=log_file,
     filemode='a',
     format='%(asctime)s - %(message)s',
     level=logging.INFO

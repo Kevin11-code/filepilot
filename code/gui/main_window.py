@@ -30,6 +30,7 @@ from code .gui.transfer_signal_bridge import TransferSignalBridge
 from code .gui.chunk_size_dialog import FileChunkSizeDialog
 from code.utils.resource_utils import get_resource_path
 from code.utils.file_utils import FileIconProvider
+from code.config.path_utils import get_user_log_path
 
 class MainWindow(QMainWindow):
     """Main application window for the SFTP client"""
@@ -87,10 +88,10 @@ class MainWindow(QMainWindow):
     
     def setup_logger(self):
         """Set up the application logger"""
-        log_file = os.path.join(os.path.dirname(__file__), "..", "logs", "filepilot.log")
+        log_path = get_user_log_path()
         self.logger = LoggerSetup.setup_logger(
             name="filepilot",
-            log_file=log_file,
+            log_file=og_path,
             log_to_console=True
         )
     
@@ -299,7 +300,7 @@ class MainWindow(QMainWindow):
         self._shown_activities = set()  # Track unique activities to avoid duplicates
         self._session_start_time = time.time()
         
-        log_path = os.path.join(os.path.dirname(__file__), "..", "logs", "filepilot.log")
+        log_path = get_user_log_path()
         log_path = os.path.abspath(log_path)
         try:
             with open(log_path, "rb") as f:
@@ -1091,7 +1092,7 @@ class MainWindow(QMainWindow):
     
     def update_activity_view(self):
         """Update the activity log view with new log entries without timestamps and duplicates"""
-        log_path = os.path.join(os.path.dirname(__file__), "..", "logs", "filepilot.log")
+        log_path = log_path = get_user_log_path()
         log_path = os.path.abspath(log_path)
         
         try:

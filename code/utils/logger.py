@@ -3,6 +3,7 @@ import logging
 import sys
 from logging.handlers import RotatingFileHandler
 from typing import Optional
+from code.config.path_utils import get_user_log_path
 
 class LoggerSetup:
     """
@@ -47,17 +48,17 @@ class LoggerSetup:
             logger.addHandler(console_handler)
         
         # File handler
-        if log_file:
-            # Ensure directory exists
-            os.makedirs(os.path.dirname(os.path.abspath(log_file)), exist_ok=True)
+        if log_file is None:
+            log_file = get_user_log_path()
+        os.makedirs(os.path.dirname(os.path.abspath(log_file)), exist_ok=True)
             
-            # Create rotating file handler
-            file_handler = RotatingFileHandler(
-                log_file,
-                maxBytes=max_size,
-                backupCount=backup_count
-            )
-            file_handler.setFormatter(formatter)
-            logger.addHandler(file_handler)
+        # Create rotating file handler
+        file_handler = RotatingFileHandler(
+            log_file,
+            maxBytes=max_size,
+            backupCount=backup_count
+        )
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
         
         return logger
