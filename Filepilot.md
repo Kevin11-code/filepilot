@@ -62,7 +62,7 @@ FilePilot is a next-generation, secure SFTP client designed for both end users a
 - **Password-based authentication** with secure handling
 - **SSH key authentication** supporting RSA, DSS, ECDSA, and Ed25519 keys
 - **Key passphrase support** for encrypted private keys
-- **Multi-format key support** including PuTTY (.ppk) files
+- **Multi-format key support** including PuTTY (.ppk, .pem) files
 
 #### Secure Credential Storage
 - **System keyring integration** (Windows Credential Manager, macOS Keychain, Linux keyrings)
