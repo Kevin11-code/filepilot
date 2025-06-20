@@ -860,13 +860,13 @@ class TransferManager:
                 # )
         
                 # Server to server using buffer of our machine, does not store on disk
-                result = client._remote_to_remote(
+                result = client.stream_remote_to_remote(
                     source_client,
                     transfer.source_path,
                     dest_client,
                     transfer.dest_path,
                     chunk_size=transfer.chunk_size,
-                    progress_callback=sftp_progress_wrapper, # Pass our wrapper
+                    progress_callback=sftp_progress_wrapper,
                     overwrite_callback=s2s_overwrite_callback,
                     cancel_event=transfer.cancel_event
                 )
