@@ -311,6 +311,12 @@ body {
     font-size: 4rem;
 }
 
+.shield-icon-img {
+    width: 64px;
+    height: 64px;
+    object-fit: contain;
+}
+
 /* Download Section */
 .download {
     padding: 80px 0;
@@ -372,6 +378,12 @@ body {
     background: rgba(255, 255, 255, 0.05);
     border-radius: 8px;
     flex-shrink: 0;
+}
+
+.platform-icon-img {
+    width: 32px;
+    height: 32px;
+    object-fit: contain;
 }
 
 .platform-info {
