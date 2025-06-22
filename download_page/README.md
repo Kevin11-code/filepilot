@@ -51,8 +51,8 @@ download_page/
 ├── assets/
 │   └── filePilotIcon.png  # Logo file
 ├── downloads/          # Directory for binary files
-│   ├── FilePilot-Setup.exe  # Windows installer (add your file here)
-│   └── filepilot-linux     # Linux binary (add your file here)
+│   ├── filepilot.exe       # Windows executable (add your file here)
+│   └── filepilot           # Linux binary (add your file here)
 └── README.md           # This file
 ```
 
@@ -60,8 +60,8 @@ download_page/
 
 Before deployment, add your actual binary files to the `downloads/` directory:
 
-1. **Windows**: Place your `.exe` installer as `downloads/FilePilot-Setup.exe`
-2. **Linux**: Place your Linux binary as `downloads/filepilot-linux`
+1. **Windows**: Place your `.exe` executable as `downloads/filepilot.exe`
+2. **Linux**: Place your Linux binary as `downloads/filepilot`
 
 ## Customization
 
