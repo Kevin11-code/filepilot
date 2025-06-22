@@ -1,0 +1,23 @@
+{
+  "name": "filepilot-download-page",
+  "version": "1.0.0",
+  "description": "Download page for FilePilot - Secure SFTP Client",
+  "main": "index.html",
+  "scripts": {
+    "dev": "npx serve .",
+    "build": "echo 'Static site - no build required'",
+    "start": "npx serve ."
+  },
+  "keywords": [
+    "filepilot",
+    "sftp",
+    "secure",
+    "download",
+    "client"
+  ],
+  "author": "FilePilot Team",
+  "license": "MIT",
+  "devDependencies": {
+    "serve": "^14.0.0"
+  }
+}
