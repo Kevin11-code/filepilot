@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>FilePilot - Secure SFTP Client</title>
     <meta name="description" content="Download FilePilot, a secure cross-platform SFTP client with advanced memory protection and dual interface design.">
-    <link rel="icon" type="image/png" href="./assets/filePilotIcon.png">
+    <link rel="icon" type="image/png" href="./assets/filepilot_icon.png">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="./styles.css">
 </head>
@@ -139,60 +139,66 @@
                     <p class="section-description">
                         Choose your platform and start using FilePilot today
                     </p>
-                </div>                <div class="download-cards">                    <div class="download-card featured">
-                        <div class="download-platform">
+                </div>                <div class="download-cards">
+                    <div class="download-card available">
+                        <div class="card-header">
                             <div class="platform-icon">💻</div>
-                            <h3>Windows</h3>
-                            <p class="platform-desc">Windows 10/11 (64-bit)</p>
+                            <div class="platform-info">
+                                <h3>Windows</h3>
+                                <span class="platform-version">10/11 • 64-bit</span>
+                            </div>
+                            <div class="status-badge ready">Ready</div>
                         </div>
-                        <div class="download-info">
-                            <div class="file-info">
+                        <div class="card-body">
+                            <div class="file-details">
                                 <span class="file-name">filepilot.exe</span>
-                                <span class="file-size">~50 MB</span>
+                                <span class="file-size">50 MB</span>
                             </div>
-                            <a href="./downloads/filepilot.exe" class="btn btn-download" download>
-                                <span class="download-icon">📥</span>
-                                Download for Windows
+                            <a href="./downloads/filepilot.exe" class="download-btn primary" download>
+                                <span class="btn-icon">↓</span>
+                                <span class="btn-text">Download</span>
                             </a>
-                            <div class="download-stats">
-                                <span class="stat">✅ Ready to use</span>
-                                <span class="stat">⚡ Instant download</span>
-                            </div>
                         </div>
-                    </div>                    <div class="download-card featured">                        <div class="download-platform">
+                    </div>
+                    
+                    <div class="download-card available">
+                        <div class="card-header">
                             <div class="platform-icon">🐧</div>
-                            <h3>Linux</h3>
-                            <p class="platform-desc">Ubuntu, Debian, RHEL, CentOS, SUSE, Rocky & more</p>
+                            <div class="platform-info">
+                                <h3>Linux</h3>
+                                <span class="platform-version">Multiple distros</span>
+                            </div>
+                            <div class="status-badge ready">Ready</div>
                         </div>
-                        <div class="download-info">
-                            <div class="file-info">
+                        <div class="card-body">
+                            <div class="file-details">
                                 <span class="file-name">filepilot</span>
-                                <span class="file-size">~70 MB</span>
+                                <span class="file-size">70 MB</span>
                             </div>
-                            <a href="./downloads/filepilot" class="btn btn-download" download>
-                                <span class="download-icon">📥</span>
-                                Download for Linux
+                            <a href="./downloads/filepilot" class="download-btn primary" download>
+                                <span class="btn-icon">↓</span>
+                                <span class="btn-text">Download</span>
                             </a>
-                            <div class="download-stats">
-                                <span class="stat">✅ Ready to use</span>
-                                <span class="stat">🔧 No dependencies</span>
-                            </div>
-                        </div>                    </div><div class="download-card upcoming">
-                        <div class="download-platform">
-                            <div class="platform-icon">🍎</div>
-                            <h3>macOS</h3>
-                            <p class="platform-desc">Intel & Apple Silicon</p>
                         </div>
-                        <div class="download-info">
-                            <div class="coming-soon-badge">In Development</div>
-                            <div class="btn btn-coming-soon">
-                                <span class="download-icon">⏳</span>
-                                Coming Soon
+                    </div>
+                    
+                    <div class="download-card upcoming">
+                        <div class="card-header">
+                            <div class="platform-icon">🍎</div>
+                            <div class="platform-info">
+                                <h3>macOS</h3>
+                                <span class="platform-version">Intel & Apple Silicon</span>
                             </div>
-                            <div class="download-stats">
-                                <span class="stat">🔧 In progress</span>
-                                <span class="stat">📧 Get notified</span>
+                            <div class="status-badge developing">Soon</div>
+                        </div>
+                        <div class="card-body">
+                            <div class="development-info">
+                                <span class="dev-status">In active development</span>
                             </div>
+                            <button class="download-btn disabled">
+                                <span class="btn-icon">⏳</span>
+                                <span class="btn-text">Coming Soon</span>
+                            </button>
                         </div>
                     </div>
                 </div>
