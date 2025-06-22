@@ -160,8 +160,9 @@ body {
 }
 
 .hero-app-image {
-    width: 300px;
-    height: 300px;
+    width: 400px;
+    height: 400px;
+    border-radius: 50%;
     object-fit: contain;
     filter: drop-shadow(0 20px 40px rgba(0, 0, 0, 0.3));
     animation: float 3s ease-in-out infinite;
@@ -312,8 +313,8 @@ body {
 }
 
 .shield-icon-img {
-    width: 64px;
-    height: 64px;
+    width: 120px;
+    height: 120px;
     object-fit: contain;
 }
 
