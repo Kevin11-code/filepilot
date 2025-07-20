@@ -1,327 +1,499 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>FilePilot - Secure SFTP Client</title>
-    <meta name="description" content="Download FilePilot, a secure cross-platform SFTP client with advanced memory protection and dual interface design.">
-    <link rel="icon" type="image/png" href="./assets/filepilot_icon.png">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="./styles.css">
-</head>
-<body>
+    <meta
+      name="description"
+      content="Download FilePilot, a secure cross-platform SFTP client with advanced memory protection and dual interface design."
+    />
+    <link rel="icon" type="image/png" href="./assets/filepilot_icon.png" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
     <header class="header">
-        <nav class="nav">
-            <div class="nav-container">
-                <div class="logo">
-                    <img src="./assets/filePilotIcon.png" alt="FilePilot Logo" class="logo-img">
-                    <span class="logo-text">FilePilot</span>
-                </div>
-                <div class="nav-links">
-                    <a href="#features" class="nav-link">Features</a>
-                    <a href="#download" class="nav-link">Download</a>
-                    <a href="#security" class="nav-link">Security</a>
-                    <a href="https://github.com/Kevin11-code/filepilot/tree/altf4" class="nav-link" target="_blank">GitHub</a>
-                </div>
-            </div>
-        </nav>
+      <nav class="nav">
+        <div class="nav-container">
+          <div class="logo">
+            <img
+              src="./assets/filepilot_icon.png"
+              alt="FilePilot Logo"
+              class="logo-img"
+            />
+            <span class="logo-text">FilePilot</span>
+          </div>
+          <div class="nav-links">
+            <a href="#features" class="nav-link">Features</a>
+            <a href="#download" class="nav-link">Download</a>
+            <a href="#security" class="nav-link">Security</a>
+            <a
+              href="https://github.com/Kevin11-code/filepilot/tree/altf4"
+              class="nav-link"
+              target="_blank"
+              >GitHub</a
+            >
+          </div>
+        </div>
+      </nav>
     </header>
 
     <main>
-        <!-- Hero Section -->
-        <section class="hero">
-            <div class="container">
-                <div class="hero-content">
-                    <div class="hero-text">
-                        <h1 class="hero-title">
-                            Secure SFTP Client for 
-                            <span class="gradient-text">Everyone</span>
-                        </h1>
-                        <p class="hero-description">
-                            FilePilot is a next-generation SFTP client with advanced memory protection, 
-                            dual interface design, and enterprise-grade security features.
-                        </p>
-                        <div class="hero-buttons">
-                            <a href="#download" class="btn btn-primary">Download Now</a>
-                            <a href="#features" class="btn btn-secondary">Learn More</a>
-                        </div>
-                    </div>
-                    <div class="hero-image">
-                        <img src="./assets/filePilotIcon.png" alt="FilePilot Application" class="hero-app-image">
-                    </div>
-                </div>
+      <!-- Hero Section -->
+      <section class="hero">
+        <div class="container">
+          <div class="hero-content">
+            <div class="hero-text">
+              <h1 class="hero-title">
+                Secure SFTP Client for
+                <span class="gradient-text">Everyone</span>
+              </h1>
+              <p class="hero-description">
+                FilePilot is a next-generation SFTP client with advanced memory
+                protection, dual interface design, and enterprise-grade security
+                features.
+              </p>
+              <div class="hero-buttons">
+                <a href="#download" class="btn btn-primary">Download Now</a>
+                <a href="#features" class="btn btn-secondary">Learn More</a>
+              </div>
             </div>
-        </section>
-
-        <!-- Features Section -->
-        <section id="features" class="features">
-            <div class="container">
-                <div class="section-header">
-                    <h2 class="section-title">Why Choose FilePilot?</h2>
-                    <p class="section-description">
-                        Built with security first, FilePilot offers advanced features that protect your data
-                    </p>
-                </div>                <div class="features-grid">
-                    <div class="feature-card">
-                        <div class="feature-icon">�</div>
-                        <h3>Memory-Safe Security</h3>
-                        <p>Advanced SecureString implementation encrypts passwords in memory and protects against memory dump attacks.</p>
-                    </div>
-                    <div class="feature-card">
-                        <div class="feature-icon">⚡</div>
-                        <h3>Dual Interface</h3>
-                        <p>Choose between an intuitive GUI for everyday use or powerful CLI for automation and scripting.</p>
-                    </div>
-                    <div class="feature-card">
-                        <div class="feature-icon">�</div>
-                        <h3>Cross-Platform</h3>
-                        <p>Works seamlessly on Windows, macOS, and Linux with native performance on each platform.</p>
-                    </div>
-                    <div class="feature-card">
-                        <div class="feature-icon">🚀</div>
-                        <h3>High Performance</h3>
-                        <p>Optimized chunked transfers, transfer queues with pause/resume, and efficient large file handling.</p>
-                    </div>
-                    <div class="feature-card">
-                        <div class="feature-icon">🔑</div>
-                        <h3>Multiple Auth Methods</h3>
-                        <p>Support for password authentication, SSH keys with/without passphrases, and system keyring integration.</p>
-                    </div>
-                    <div class="feature-card">
-                        <div class="feature-icon">🔄</div>
-                        <h3>Server-to-Server</h3>
-                        <p>Direct server-to-server transfers without routing through your local machine for maximum efficiency.</p>
-                    </div>
-                </div>
+            <div class="hero-image">
+              <img
+                src="./assets/filePilotIcon.png"
+                alt="FilePilot Application"
+                class="hero-app-image"
+              />
             </div>
-        </section>
+          </div>
+        </div>
+      </section>
 
-        <!-- Security Section -->
-        <section id="security" class="security">
-            <div class="container">
-                <div class="security-content">
-                    <div class="security-text">
-                        <h2>Enterprise-Grade Security</h2>
-                        <p>FilePilot goes beyond standard SFTP clients with advanced security measures designed to protect your most sensitive data.</p>
-                        <ul class="security-list">
-                            <li>
-                                <span class="security-item-title">SecureString Implementation</span>
-                                <span class="security-item-desc">Passwords encrypted in memory with XOR encryption and random keys</span>
-                            </li>
-                            <li>
-                                <span class="security-item-title">Memory Protection</span>
-                                <span class="security-item-desc">Automatic memory clearing and overwriting with random data</span>
-                            </li>
-                            <li>
-                                <span class="security-item-title">Credential Storage</span>
-                                <span class="security-item-desc">System keyring integration with optional configuration encryption</span>
-                            </li>
-                            <li>
-                                <span class="security-item-title">Zero Exposure</span>
-                                <span class="security-item-desc">Stdin password input prevents command-line credential exposure</span>
-                            </li>
-                        </ul>
-                    </div>                    <div class="security-image">
-                        <div class="security-shield">
-                            <img src="./assets/shield.png" alt="Security Shield" class="shield-icon-img">
-                        </div>
-                    </div>
-                </div>
+      <!-- Features Section -->
+      <section id="features" class="features">
+        <div class="container">
+          <div class="section-header">
+            <h2 class="section-title">Why Choose FilePilot?</h2>
+            <p class="section-description">
+              Built with security first, FilePilot offers advanced features that
+              protect your data
+            </p>
+          </div>
+          <div class="features-grid">
+            <div class="feature-card">
+              <div class="feature-icon">
+                <img
+                  src="./assets/memory_safe_security.avif"
+                  alt="Memory-Safe Security Icon"
+                  class="feature-icon-img"
+                  width="70"
+                  style="border-radius: 50%"
+                />
+              </div>
+              <h3>Memory-Safe Security</h3>
+              <p>
+                Advanced SecureString implementation encrypts passwords in
+                memory and protects against memory dump attacks.
+              </p>
             </div>
-        </section>
-
-        <!-- Download Section -->
-        <section id="download" class="download">
-            <div class="container">
-                <div class="section-header">
-                    <h2 class="section-title">Download FilePilot</h2>
-                    <p class="section-description">
-                        Choose your platform and start using FilePilot today
-                    </p>
-                </div>                <div class="download-cards">                    <div class="download-card available">
-                        <div class="card-header">
-                            <div class="platform-icon">
-                                <img src="./assets/windows.png" alt="Windows" class="platform-icon-img">
-                            </div>
-                            <div class="platform-info">
-                                <h3>Windows</h3>
-                                <span class="platform-version">10/11 • 64-bit</span>
-                            </div>
-                            <div class="status-badge ready">Ready</div>
-                        </div>
-                        <div class="card-body">
-                            <div class="file-details">
-                                <span class="file-name">filepilot.exe</span>
-                                <span class="file-size">50 MB</span>
-                            </div>
-                            <a href="./downloads/filepilot.exe" class="download-btn primary" download>
-                                <span class="btn-icon">↓</span>
-                                <span class="btn-text">Download</span>
-                            </a>
-                        </div>
-                    </div>
-                      <div class="download-card available">
-                        <div class="card-header">
-                            <div class="platform-icon">
-                                <img src="./assets/linux.png" alt="Linux" class="platform-icon-img">
-                            </div>
-                            <div class="platform-info">
-                                <h3>Linux</h3>
-                                <span class="platform-version">Multiple distros</span>
-                            </div>
-                            <div class="status-badge ready">Ready</div>
-                        </div>
-                        <div class="card-body">
-                            <div class="file-details">
-                                <span class="file-name">filepilot</span>
-                                <span class="file-size">70 MB</span>
-                            </div>
-                            <a href="./downloads/filepilot" class="download-btn primary" download>
-                                <span class="btn-icon">↓</span>
-                                <span class="btn-text">Download</span>
-                            </a>
-                        </div>
-                    </div>
-                      <div class="download-card upcoming">
-                        <div class="card-header">
-                            <div class="platform-icon">
-                                <img src="./assets/apple.png" alt="macOS" class="platform-icon-img">
-                            </div>
-                            <div class="platform-info">
-                                <h3>macOS</h3>
-                                <span class="platform-version">Intel & Apple Silicon</span>
-                            </div>
-                            <div class="status-badge developing">Soon</div>
-                        </div>
-                        <div class="card-body">
-                            <div class="development-info">
-                                <span class="dev-status">In active development</span>
-                            </div>
-                            <button class="download-btn disabled">
-                                <span class="btn-icon">⏳</span>
-                                <span class="btn-text">Coming Soon</span>
-                            </button>
-                        </div>
-                    </div>
+            <div class="feature-card">
+              <div class="feature-icon">
+                <div class="feature-icon">
+                  <img
+                    src="./assets/dual_interface.webp"
+                    alt="Dual Interface Icon"
+                    class="feature-icon-img"
+                    width="70"
+                    style="border-radius: 20%"
+                  />
                 </div>
-                
-                <!-- Installation Instructions -->
-                <div class="installation">
-                    <h3>Quick Installation</h3>                    <div class="install-tabs">
-                        <button class="tab-btn active" data-tab="windows">Windows</button>
-                        <button class="tab-btn" data-tab="linux">Linux</button>
-                        <button class="tab-btn" data-tab="macos">macOS</button>
-                    </div>
-                    <div class="tab-content active" id="windows">
-                        <div class="code-block">
-                            <code>
-1. Download filepilot.exe<br>
-2. Double-click to run the executable<br>
-3. No installation required - runs directly<br>
-4. Optional: Add to PATH for command-line access
-                            </code>
-                        </div>
-                    </div>                    <div class="tab-content" id="linux">
-                        <div class="code-block">
-                            <code>
-# Make executable and run<br>
-chmod +x filepilot<br>
-./filepilot<br>
-<br>
-# Or install globally<br>
-sudo mv filepilot /usr/local/bin/filepilot<br>
-filepilot
-                            </code>
-                        </div>
-                    </div>
-                    <div class="tab-content" id="macos">
-                        <div class="code-block">
-                            <code>
-🚧 macOS version is currently in development<br>
-<br>
-Expected features:<br>
-• Native Apple Silicon & Intel support<br>
-• macOS Keychain integration<br>
-• Notarized application bundle<br>
-<br>
-📧 Get notified when ready: kevinharia11@gmail.com
-                            </code>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- System Requirements -->
-                <div class="requirements">
-                    <h3>System Requirements</h3>                    <div class="requirements-grid">                        <div class="req-section">
-                            <h4>Windows</h4>
-                            <ul>
-                                <li>Windows 10 (1903+) or Windows 11</li>
-                                <li>64-bit architecture required</li>
-                                <li>4 GB RAM minimum, 8 GB recommended</li>
-                                <li>100 MB available disk space</li>
-                                <li>Visual C++ Redistributable (auto-installed)</li>
-                            </ul>
-                        </div><div class="req-section">
-                            <h4>Linux</h4>
-                            <ul>
-                                <li>Ubuntu 20.04+, Debian 11+</li>
-                                <li>RHEL 8+, CentOS 8+, Rocky Linux 8+</li>
-                                <li>SUSE Linux Enterprise 15+, openSUSE Leap 15+</li>
-                                <li>Fedora 35+, Arch Linux</li>
-                                <li>4 GB RAM minimum</li>
-                                <li>100 MB disk space</li>
-                                <li>Python 3.8+ (usually pre-installed)</li>
-                            </ul>
-                        </div>                        <div class="req-section">
-                            <h4>macOS</h4>
-                            <ul>
-                                <li>macOS 11.0+ (Big Sur or later)</li>
-                                <li>Intel x64 & Apple Silicon (M1/M2/M3) support</li>
-                                <li>4 GB RAM minimum, 8 GB recommended</li>
-                                <li>100 MB available disk space</li>
-                                <li>Native Keychain integration</li>
-                            </ul>
-                        </div>
-                    </div>
-                </div>
+              </div>
+              <h3>Dual Interface</h3>
+              <p>
+                Choose between an intuitive GUI for everyday use or powerful CLI
+                for automation and scripting.
+              </p>
             </div>
-        </section>
+            <div class="feature-card">
+              <div class="feature-icon">
+                <div class="feature-icon">
+                  <img
+                    src="./assets/cross_platform.png"
+                    alt="Cross-Platform Icon"
+                    class="feature-icon-img"
+                    width="70"
+                    style="border-radius: 5%"
+                  />
+                </div>
+              </div>
+              <h3>Cross-Platform</h3>
+              <p>
+                Works seamlessly on Windows, macOS, and Linux with native
+                performance on each platform.
+              </p>
+            </div>
+            <div class="feature-card">
+              <div class="feature-icon">
+                <img
+                  src="./assets/high_performance.png"
+                  alt="High Performance Icon"
+                  class="feature-icon-img"
+                  width="70"
+                  style="border-radius: 5%"
+                />
+              </div>
+              <h3>High Performance</h3>
+              <p>
+                Optimized chunked transfers, transfer queues with pause/resume,
+                and efficient large file handling.
+              </p>
+            </div>
+            <div class="feature-card">
+              <div class="feature-icon">
+                <div class="feature-icon">
+                  <img
+                    src="./assets/multiple_auth.jpg"
+                    alt="Multiple Auth Methods Icon"
+                    class="feature-icon-img"
+                    width="70"
+                    style="border-radius: 5%"
+                  />
+                </div>
+              </div>
+              <h3>Multiple Auth Methods</h3>
+              <p>
+                Support for password authentication, SSH keys with/without
+                passphrases, and system keyring integration.
+              </p>
+            </div>
+            <div class="feature-card">
+              <div class="feature-icon">
+                <img
+                  src="./assets/server_to_server.webp"
+                  alt="Server-to-Server Transfers Icon"
+                  class="feature-icon-img"
+                  width="70"
+                  style="border-radius: 5%"
+                />
+              </div>
+              <h3>Server-to-Server</h3>
+              <p>
+                Direct server-to-server transfers without routing through your
+                local machine for maximum efficiency.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Security Section -->
+      <section id="security" class="security">
+        <div class="container">
+          <div class="security-content">
+            <div class="security-text">
+              <h2>Enterprise-Grade Security</h2>
+              <p>
+                FilePilot goes beyond standard SFTP clients with advanced
+                security measures designed to protect your most sensitive data.
+              </p>
+              <ul class="security-list">
+                <li>
+                  <span class="security-item-title"
+                    >SecureString Implementation</span
+                  >
+                  <span class="security-item-desc"
+                    >Passwords encrypted in memory with XOR encryption and
+                    random keys</span
+                  >
+                </li>
+                <li>
+                  <span class="security-item-title">Memory Protection</span>
+                  <span class="security-item-desc"
+                    >Automatic memory clearing and overwriting with random
+                    data</span
+                  >
+                </li>
+                <li>
+                  <span class="security-item-title">Credential Storage</span>
+                  <span class="security-item-desc"
+                    >System keyring integration with optional configuration
+                    encryption</span
+                  >
+                </li>
+                <li>
+                  <span class="security-item-title">Zero Exposure</span>
+                  <span class="security-item-desc"
+                    >Stdin password input prevents command-line credential
+                    exposure</span
+                  >
+                </li>
+              </ul>
+            </div>
+            <div class="security-image">
+              <div class="security-shield">
+                <img
+                  src="./assets/shield.png"
+                  alt="Security Shield"
+                  class="shield-icon-img"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Download Section -->
+      <section id="download" class="download">
+        <div class="container">
+          <div class="section-header">
+            <h2 class="section-title">Download FilePilot</h2>
+            <p class="section-description">
+              Choose your platform and start using FilePilot today
+            </p>
+          </div>
+          <div class="download-cards">
+            <div class="download-card available">
+              <div class="card-header">
+                <div class="platform-icon">
+                  <img
+                    src="./assets/windows.png"
+                    alt="Windows"
+                    class="platform-icon-img"
+                  />
+                </div>
+                <div class="platform-info">
+                  <h3>Windows</h3>
+                  <span class="platform-version">10/11 • 64-bit</span>
+                </div>
+                <div class="status-badge ready">Ready</div>
+              </div>
+              <div class="card-body">
+                <div class="file-details">
+                  <span class="file-name">filepilot.exe</span>
+                  <span class="file-size">50 MB</span>
+                </div>
+                <a
+                  href="./downloads/filepilot.exe"
+                  class="download-btn primary"
+                  download
+                >
+                  <span class="btn-icon">↓</span>
+                  <span class="btn-text">Download</span>
+                </a>
+              </div>
+            </div>
+            <div class="download-card available">
+              <div class="card-header">
+                <div class="platform-icon">
+                  <img
+                    src="./assets/linux.png"
+                    alt="Linux"
+                    class="platform-icon-img"
+                  />
+                </div>
+                <div class="platform-info">
+                  <h3>Linux</h3>
+                  <span class="platform-version">Multiple distros</span>
+                </div>
+                <div class="status-badge ready">Ready</div>
+              </div>
+              <div class="card-body">
+                <div class="file-details">
+                  <span class="file-name">filepilot</span>
+                  <span class="file-size">70 MB</span>
+                </div>
+                <a
+                  href="./downloads/filepilot"
+                  class="download-btn primary"
+                  download
+                >
+                  <span class="btn-icon">↓</span>
+                  <span class="btn-text">Download</span>
+                </a>
+              </div>
+            </div>
+            <div class="download-card upcoming">
+              <div class="card-header">
+                <div class="platform-icon">
+                  <img
+                    src="./assets/apple.png"
+                    alt="macOS"
+                    class="platform-icon-img"
+                  />
+                </div>
+                <div class="platform-info">
+                  <h3>macOS</h3>
+                  <span class="platform-version">Intel & Apple Silicon</span>
+                </div>
+                <div class="status-badge developing">Soon</div>
+              </div>
+              <div class="card-body">
+                <div class="development-info">
+                  <span class="dev-status">In active development</span>
+                </div>
+                <button class="download-btn disabled">
+                  <span class="btn-icon">⏳</span>
+                  <span class="btn-text">Coming Soon</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Installation Instructions -->
+          <div class="installation">
+            <h3>Quick Installation</h3>
+            <div class="install-tabs">
+              <button class="tab-btn active" data-tab="windows">Windows</button>
+              <button class="tab-btn" data-tab="linux">Linux</button>
+              <button class="tab-btn" data-tab="macos">macOS</button>
+            </div>
+            <div class="tab-content active" id="windows">
+              <div class="code-block">
+                <code>
+                  1. Download filepilot.exe<br />
+                  2. Double-click to run the executable<br />
+                  3. No installation required - runs directly<br />
+                  4. Optional: Add to PATH for command-line access
+                </code>
+              </div>
+            </div>
+            <div class="tab-content" id="linux">
+              <div class="code-block">
+                <code>
+                  # Make executable and run<br />
+                  chmod +x filepilot<br />
+                  ./filepilot<br />
+                  <br />
+                  # Or install globally<br />
+                  sudo mv filepilot /usr/local/bin/filepilot<br />
+                  filepilot
+                </code>
+              </div>
+            </div>
+            <div class="tab-content" id="macos">
+              <div class="code-block">
+                <code>
+                  🚧 macOS version is currently in development<br />
+                  <br />
+                  Expected features:<br />
+                  • Native Apple Silicon & Intel support<br />
+                  • macOS Keychain integration<br />
+                  • Notarized application bundle<br />
+                  <br />
+                  📧 Get notified when ready: kevinharia11@gmail.com
+                </code>
+              </div>
+            </div>
+          </div>
+
+          <!-- System Requirements -->
+          <div class="requirements">
+            <h3>System Requirements</h3>
+            <div class="requirements-grid">
+              <div class="req-section">
+                <h4>Windows</h4>
+                <ul>
+                  <li>Windows 10 (1903+) or Windows 11</li>
+                  <li>64-bit architecture required</li>
+                  <li>4 GB RAM minimum, 8 GB recommended</li>
+                  <li>100 MB available disk space</li>
+                  <li>Visual C++ Redistributable (auto-installed)</li>
+                </ul>
+              </div>
+              <div class="req-section">
+                <h4>Linux</h4>
+                <ul>
+                  <li>Ubuntu 20.04+, Debian 11+</li>
+                  <li>RHEL 8+, CentOS 8+, Rocky Linux 8+</li>
+                  <li>SUSE Linux Enterprise 15+, openSUSE Leap 15+</li>
+                  <li>Fedora 35+, Arch Linux</li>
+                  <li>4 GB RAM minimum</li>
+                  <li>100 MB disk space</li>
+                  <li>Python 3.8+ (usually pre-installed)</li>
+                </ul>
+              </div>
+              <div class="req-section">
+                <h4>macOS</h4>
+                <ul>
+                  <li>macOS 11.0+ (Big Sur or later)</li>
+                  <li>Intel x64 & Apple Silicon (M1/M2/M3) support</li>
+                  <li>4 GB RAM minimum, 8 GB recommended</li>
+                  <li>100 MB available disk space</li>
+                  <li>Native Keychain integration</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
     </main>
 
     <footer class="footer">
-        <div class="container">
-            <div class="footer-content">
-                <div class="footer-section">
-                    <div class="footer-logo">
-                        <img src="./assets/filePilotIcon.png" alt="FilePilot Logo" class="footer-logo-img">
-                        <span class="footer-logo-text">FilePilot</span>
-                    </div>
-                    <p class="footer-desc">Secure SFTP client with advanced memory protection and enterprise-grade features.</p>
-                </div>
-                <div class="footer-section">
-                    <h4>Resources</h4>
-                    <ul class="footer-links">
-                        <li><a href="#features">Features</a></li>
-                        <li><a href="#security">Security</a></li>
-                        <li><a href="#download">Download</a></li>
-                        <li><a href="https://github.com/Kevin11-code/filepilot" target="_blank">GitHub</a></li>
-                    </ul>
-                </div>
-                <div class="footer-section">
-                    <h4>Support</h4>
-                    <ul class="footer-links">
-                        <li><a href="https://github.com/Kevin11-code/filepilot/issues" target="_blank">Report Issues</a></li>
-                        <li><a href="https://github.com/Kevin11-code/filepilot/wiki" target="_blank">Documentation</a></li>
-                        <li><a href="mailto:kevinharia11@gmail.com">Contact</a></li>
-                    </ul>
-                </div>
+      <div class="container">
+        <div class="footer-content">
+          <div class="footer-section">
+            <div class="footer-logo">
+              <img
+                src="./assets/filePilotIcon.png"
+                alt="FilePilot Logo"
+                class="footer-logo-img"
+              />
+              <span class="footer-logo-text">FilePilot</span>
             </div>
-            <div class="footer-bottom">
-                <p>&copy; 2025 FilePilot. Open source software released under MIT License.</p>
-            </div>
+            <p class="footer-desc">
+              Secure SFTP client with advanced memory protection and
+              enterprise-grade features.
+            </p>
+          </div>
+          <div class="footer-section">
+            <h4>Resources</h4>
+            <ul class="footer-links">
+              <li><a href="#features">Features</a></li>
+              <li><a href="#security">Security</a></li>
+              <li><a href="#download">Download</a></li>
+              <li>
+                <a
+                  href="https://github.com/Kevin11-code/filepilot"
+                  target="_blank"
+                  >GitHub</a
+                >
+              </li>
+            </ul>
+          </div>
+          <div class="footer-section">
+            <h4>Support</h4>
+            <ul class="footer-links">
+              <li>
+                <a
+                  href="https://github.com/Kevin11-code/filepilot/issues"
+                  target="_blank"
+                  >Report Issues</a
+                >
+              </li>
+              <li>
+                <a
+                  href="https://github.com/Kevin11-code/filepilot/wiki"
+                  target="_blank"
+                  >Documentation</a
+                >
+              </li>
+              <li><a href="mailto:kevinharia11@gmail.com">Contact</a></li>
+            </ul>
+          </div>
         </div>
+        <div class="footer-bottom">
+          <p>
+            &copy; 2025 FilePilot. Open source software released under MIT
+            License.
+          </p>
+        </div>
+      </div>
     </footer>
 
     <script src="./script.js"></script>
-</body>
+  </body>
 </html>
